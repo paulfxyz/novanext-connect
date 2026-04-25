@@ -48,8 +48,33 @@ sqlite.exec(`
 `);
 
 function slugify(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  return text
+    .normalize('NFD')                        // decompose: é → e + ́
+    .replace(/[\u0300-\u036f]/g, '')          // strip combining diacritics
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
 }
+
+// Migration: fix broken slugs from pre-NFD slugify (runs once on startup)
+(function fixBrokenSlugs() {
+  try {
+    const rows = sqlite.prepare('SELECT id, name, slug FROM contacts').all() as { id: number; name: string; slug: string }[];
+    for (const row of rows) {
+      const correct = slugify(row.name);
+      if (correct !== row.slug) {
+        // Check no collision first
+        const collision = sqlite.prepare('SELECT id FROM contacts WHERE slug = ? AND id != ?').get(correct, row.id);
+        if (!collision) {
+          sqlite.prepare('UPDATE contacts SET slug = ? WHERE id = ?').run(correct, row.id);
+          console.log(`[migration] fixed slug: ${row.slug} → ${correct}`);
+        }
+      }
+    }
+  } catch (e) {
+    // Non-fatal
+  }
+})();
 
 function uniqueSlug(base: string, existing: string[]): string {
   let slug = slugify(base);

@@ -205,6 +205,55 @@ export function registerRoutes(httpServer: Server, app: Express): void {
     }
   });
 
+  // Bulk import contacts directly (from CSV / vCard parse)
+  app.post("/api/admin/import", (req, res) => {
+    const schema = z.array(z.object({
+      name: z.string().min(1),
+      title: z.string().optional().nullable(),
+      bio: z.string().optional().nullable(),
+      avatarUrl: z.string().optional().nullable(),
+      location: z.string().optional().nullable(),
+      companyName: z.string().optional().nullable(),
+      companyRole: z.string().optional().nullable(),
+      website: z.string().optional().nullable(),
+      linkedinUrl: z.string().optional().nullable(),
+      twitterUrl: z.string().optional().nullable(),
+      githubUrl: z.string().optional().nullable(),
+      instagramUrl: z.string().optional().nullable(),
+      tags: z.string().optional().nullable(),
+      socialLinks: z.string().optional().nullable(),
+    }));
+    const body = schema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+    const results: { name: string; status: 'added' | 'error'; error?: string }[] = [];
+    for (const item of body.data) {
+      try {
+        storage.createContact({
+          name: item.name,
+          slug: item.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+          title: item.title || null,
+          bio: item.bio || null,
+          avatarUrl: item.avatarUrl || null,
+          location: item.location || null,
+          companyName: item.companyName || null,
+          companyRole: item.companyRole || null,
+          website: item.website || null,
+          linkedinUrl: item.linkedinUrl || null,
+          twitterUrl: item.twitterUrl || null,
+          githubUrl: item.githubUrl || null,
+          instagramUrl: item.instagramUrl || null,
+          tags: item.tags || '[]',
+          socialLinks: item.socialLinks || '[]',
+          isVerified: false,
+        });
+        results.push({ name: item.name, status: 'added' });
+      } catch (e: any) {
+        results.push({ name: item.name, status: 'error', error: e.message });
+      }
+    }
+    res.json({ results, added: results.filter(r => r.status === 'added').length });
+  });
+
   // Delete company
   app.delete("/api/admin/companies/:id", (req, res) => {
     const id = parseInt(req.params.id);
