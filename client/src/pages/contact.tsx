@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin, Building2, ExternalLink, Verified } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin, Building2, ExternalLink, Verified, QrCode, Copy, Check } from "lucide-react";
 import type { Contact } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import QRCode from "qrcode";
 
 function NovaNextLogo({ size = 32 }: { size?: number }) {
   return (
@@ -15,6 +17,8 @@ function NovaNextLogo({ size = 32 }: { size?: number }) {
 
 export default function ContactPage() {
   const { slug } = useParams<{ slug: string }>();
+  const [qrSvg, setQrSvg] = useState<string>("");
+  const [copied, setCopied] = useState(false);
 
   const { data: contact, isLoading, isError } = useQuery<Contact>({
     queryKey: ["/api/contacts", slug],
@@ -24,6 +28,30 @@ export default function ContactPage() {
       return res.json();
     },
   });
+
+  // Profile URL — always canonical nova.pplx.app
+  const profileUrl = `https://nova.pplx.app/#/contact/${slug}`;
+
+  // Generate QR code SVG once slug is known
+  useEffect(() => {
+    if (!slug) return;
+    QRCode.toString(profileUrl, {
+      type: 'svg',
+      margin: 2,
+      width: 200,
+      color: { dark: '#00E5D0', light: '#080818' },
+    }).then(setQrSvg).catch(() => {});
+  }, [slug]);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(profileUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // fallback: select a hidden input
+    }
+  };
 
   const tags: string[] = (() => {
     try { return JSON.parse(contact?.tags || "[]"); } catch { return []; }
@@ -189,6 +217,69 @@ export default function ContactPage() {
             </div>
           </div>
         )}
+
+        {/* QR Code — share this profile */}
+        <div className="nova-card" style={{ padding: '28px', marginBottom: '20px', textAlign: 'center' }}>
+          <h2 style={{
+            fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '0.75rem',
+            color: 'var(--nova-cyan)', letterSpacing: '0.12em', textTransform: 'uppercase',
+            marginBottom: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
+          }}>
+            <QrCode size={13}/> Share Profile
+          </h2>
+          <p style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.35)', marginBottom: '20px' }}>
+            Scan to open this profile on any device
+          </p>
+
+          {/* QR SVG */}
+          {qrSvg ? (
+            <div style={{
+              display: 'inline-block',
+              background: '#080818',
+              border: '2px solid rgba(0,229,208,0.25)',
+              borderRadius: '16px',
+              padding: '16px',
+              boxShadow: '0 0 40px rgba(0,229,208,0.08)',
+              marginBottom: '20px',
+            }}
+              dangerouslySetInnerHTML={{ __html: qrSvg }}
+            />
+          ) : (
+            <div className="nova-skeleton" style={{ width: '180px', height: '180px', borderRadius: '12px', margin: '0 auto 20px' }}/>
+          )}
+
+          {/* Profile URL + copy button */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '8px',
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '10px', padding: '10px 14px',
+            maxWidth: '340px', margin: '0 auto',
+          }}>
+            <span style={{
+              flex: 1, fontSize: '0.72rem', color: 'rgba(255,255,255,0.45)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              fontFamily: 'monospace',
+            }}>
+              {profileUrl}
+            </span>
+            <button
+              onClick={handleCopy}
+              data-testid="btn-copy-url"
+              style={{
+                flexShrink: 0, background: copied ? 'rgba(74,222,128,0.15)' : 'rgba(0,229,208,0.1)',
+                border: `1px solid ${copied ? 'rgba(74,222,128,0.4)' : 'rgba(0,229,208,0.3)'}`,
+                borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '4px',
+                color: copied ? '#4ade80' : 'var(--nova-cyan)', fontSize: '0.72rem', fontWeight: 700,
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {copied ? <Check size={12}/> : <Copy size={12}/>}
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+        </div>
 
         {/* Back */}
         <div style={{ textAlign: 'center', paddingTop: '16px' }}>

@@ -284,21 +284,69 @@ function parseModelOutput(raw: string): any[] {
 
 // Build prompt string — called once we know whether we have anchor context or not
 function buildPrompt(query: string, anchorContext: string, hasAnchor: boolean): string {
-  return `You are a precision research assistant for NovaNEXT — a major AI, startup & investment conference in Aveiro, Portugal on 17 June 2026. The conference attracts founders, investors, AI researchers, and tech leaders from the Portuguese/Lusophone ecosystem and wider Europe.
+  return `You are a research assistant for NovaNEXT — a major AI, startup & investment conference in Aveiro, Portugal on 17 June 2026.
 
-Your task: find 4 DISTINCT real people or companies matching the query: "${query}"${anchorContext}
+Find 4 DISTINCT real people or companies matching: "${query}"${anchorContext}
 
-Rules:
-${hasAnchor ? `- FIRST result MUST be the EXACT person/company identified by the ANCHOR above. Use the verified facts (name, handles, links) verbatim. DO NOT invent or modify any URLs — use exactly what was provided. Set confidence ≥ 0.93 and source to "scraped profile".
-- Anchor github_url → set githubUrl. Anchor twitter_url → set twitterUrl. Anchor linkedin_url → set linkedinUrl. Anchor website → set website.
-` : ''}- Results 2-4: real people/companies with same/similar name, OR closely related figures in the Portuguese/European tech ecosystem
-- Prioritise Portuguese, Lusophone, and European AI/startup/VC figures
-- Write a DETAILED bio of 3-5 sentences with specific facts (companies founded, roles held, technologies, achievements, Portuguese/tech connections)
-- Only put REAL, VERIFIABLE URLs in link fields. If unsure, set to null. Do NOT fabricate handles.
-- Use canonical URL form: linkedin.com/in/handle, x.com/handle, github.com/handle
+⚠️ CRITICAL ANTI-HALLUCINATION RULES — READ CAREFULLY:
+${hasAnchor
+  ? `- Result #1 MUST be the exact person from the ANCHOR above. Their bio, title, and company MUST come from the anchor facts only. DO NOT invent anything not present in the anchor data. If a field is not in the anchor, set it to null or omit it.
+- Copy anchor URLs verbatim: github_url → githubUrl, twitter_url → twitterUrl, linkedin_url → linkedinUrl, website → website.
+`
+  : ''}- For results you GENUINELY KNOW (famous people, well-documented public figures): write a factual bio of 2-3 sentences using only verified facts.
+- For results you are NOT CERTAIN ABOUT: set bio to null and confidence to 0.4 or below. DO NOT fabricate job titles, company names, or achievements.
+- NEVER invent: company names, funding amounts, university affiliations, conference appearances, or titles.
+- Only include a linkedinUrl/twitterUrl/githubUrl if you are 100% certain the exact handle is correct. If in doubt — null.
+- It is FAR BETTER to return a result with null bio and null links than to hallucinate plausible-sounding fiction.
 
-Return EXACTLY 4 items as a raw JSON array (no markdown, no wrapper). Each item:
-{"name":"Full Name","title":"Role","bio":"3-5 sentence bio","avatarUrl":null,"location":"City, Country","companyName":"Company","companyRole":"Role at company","website":"https://... or null","linkedinUrl":"https://linkedin.com/in/handle or null","twitterUrl":"https://x.com/handle or null","githubUrl":"https://github.com/handle or null","tags":["AI","Startup"],"confidence":0.0,"source":"scraped profile or knowledge base","reason":"Why attend NovaNEXT 2026?"}`;
+Return EXACTLY 4 items as a raw JSON array (no markdown, no wrapper):
+{"name":"Full Name","title":"Role or null","bio":"Factual bio or null","avatarUrl":null,"location":"City, Country or null","companyName":"Company or null","companyRole":"Role or null","website":"verified URL or null","linkedinUrl":"verified URL or null","twitterUrl":"verified URL or null","githubUrl":"verified URL or null","tags":["tag1","tag2"],"confidence":0.0,"source":"knowledge base","reason":"1 sentence: why they might attend NovaNEXT 2026"}`;
+}
+
+// Build a suggestion object directly from enriched facts — no AI involved.
+// This is the "ground truth" entry for the anchor person when a URL is provided.
+function buildAnchorFromFacts(profile: EnrichedProfile, query: string): any {
+  const f = profile.facts;
+  const name = f['name'] || query.replace(/https?:\/\/\S+/g, '').trim() || 'Unknown';
+
+  // Build bio from verified facts only — no invention
+  const bioParts: string[] = [];
+  if (f['bio_hint'])   bioParts.push(f['bio_hint']);
+  if (f['company'])    bioParts.push(`Works at ${f['company']}.`);
+  if (f['location'])   bioParts.push(`Based in ${f['location']}.`);
+  if (f['top_repos']) {
+    // Summarise top repos as products/projects
+    const repoSummaries = f['top_repos'].split('; ')
+      .map(r => r.split(':')[1]?.trim()).filter(Boolean).slice(0, 3);
+    if (repoSummaries.length) bioParts.push(`Notable projects: ${repoSummaries.join(' • ')}`);
+  }
+  if (f['site_text']) bioParts.push(f['site_text'].slice(0, 200).replace(/\s+/g, ' '));
+
+  // Tags from what we know
+  const tags: string[] = ['Tech'];
+  if (f['top_repos']?.toLowerCase().includes('rust'))    tags.push('Rust');
+  if (f['top_repos']?.toLowerCase().includes('ai') || f['bio_hint']?.toLowerCase().includes('ai')) tags.push('AI');
+  if (f['bio_hint']?.toLowerCase().includes('entrepreneur')) tags.push('Entrepreneur');
+  if (f['bio_hint']?.toLowerCase().includes('founder'))      tags.push('Founder');
+  if (profile.platform === 'github') tags.push('Open Source');
+
+  return {
+    name,
+    title:       f['bio_hint'] || null,   // GitHub bio IS the title for many indie builders
+    bio:         bioParts.length ? bioParts.join(' ') : null,
+    avatarUrl:   null,
+    location:    f['location'] || null,
+    companyName: f['company'] || null,
+    companyRole: null,
+    website:     f['website'] || null,
+    linkedinUrl: f['linkedin_url'] || null,
+    githubUrl:   f['github_url'] || null,
+    twitterUrl:  f['twitter_url'] || null,
+    tags:        [...new Set(tags)],
+    confidence:  0.97,
+    source:      'scraped profile',
+    reason:      `Profile verified from ${profile.platform} (${profile.url}).`,
+  };
 }
 
 // ── Main research function ────────────────────────────────────────────────────
@@ -345,33 +393,14 @@ async function searchPersonOrCompany(query: string, extraUrls: string[] = []): P
   // Merge AI results, injecting verified URLs into the first slot if enrichment found data
   const suggestions = mergeResults(aiResults, enrichedProfiles, hasAnchor);
 
-  // If enrichment found a name and the first AI result doesn't match well, prepend the anchor
+  // ANTI-HALLUCINATION: when we have a verified enriched profile, ALWAYS build the anchor
+  // from scraped facts only — never trust the AI bio for anchor persons.
   if (hasAnchor && enrichedProfiles[0]?.facts['name']) {
-    const anchorName = enrichedProfiles[0].facts['name'].toLowerCase().replace(/[^a-z0-9]/g, '');
-    const firstKey   = suggestions[0]?.name?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
-    if (firstKey !== anchorName && !firstKey.includes(anchorName.slice(0, 6))) {
-      // Build an anchor entry directly from enriched facts
-      const profile = enrichedProfiles[0];
-      const anchorEntry = sanitizeSuggestion({
-        name:        profile.facts['name'] || query,
-        title:       'Internet Entrepreneur',
-        bio:         profile.facts['site_text'] || profile.facts['bio_hint'] || `${profile.facts['name']} — profile found at ${profile.url}`,
-        location:    profile.facts['location'] || null,
-        companyName: profile.facts['company'] || null,
-        website:     profile.facts['website'] || null,
-        linkedinUrl: profile.facts['linkedin_url'] || null,
-        githubUrl:   profile.facts['github_url'] || null,
-        twitterUrl:  profile.facts['twitter_url'] || null,
-        tags:        profile.facts['top_repos'] ? ['Tech', 'Developer'] : ['Tech'],
-        confidence:  0.95,
-        source:      'scraped profile',
-        reason:      `Profile retrieved directly from ${profile.platform} via provided URL.`,
-      });
-      if (anchorEntry) {
-        const anchorKey = anchorEntry.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const filtered = suggestions.filter(s => s.name.toLowerCase().replace(/[^a-z0-9]/g, '') !== anchorKey);
-        return [anchorEntry, ...filtered.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))].slice(0, 10);
-      }
+    const anchorEntry = sanitizeSuggestion(buildAnchorFromFacts(enrichedProfiles[0], cleanQuery || query));
+    if (anchorEntry) {
+      const anchorKey = anchorEntry.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const filtered = suggestions.filter(s => s.name.toLowerCase().replace(/[^a-z0-9]/g, '') !== anchorKey);
+      return [anchorEntry, ...filtered.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))].slice(0, 10);
     }
   }
 
