@@ -4,7 +4,8 @@ import { storage } from "./storage";
 import { insertContactSchema, insertCompanySchema } from "@shared/schema";
 import { z } from "zod";
 
-const OPENROUTER_API_KEY = "REDACTED_KEY_REMOVED";
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+if (!OPENROUTER_API_KEY) console.warn('[NovaNEXT] WARNING: OPENROUTER_API_KEY env var not set — research will fail');
 
 // Helper: call OpenRouter with a model — 30 s hard timeout (enrichment + AI)
 async function callOpenRouter(model: string, prompt: string): Promise<string> {
@@ -113,10 +114,10 @@ async function enrichUrl(url: string): Promise<EnrichedProfile> {
         result.facts['linkedin_url'] = `https://www.linkedin.com/${m[1]}/${m[2]}/`;
         result.facts['profile_type'] = m[1] === 'company' ? 'company' : 'person';
       }
-      // LinkedIn is login-walled (returns HTTP 999). Use the handle to search
-      // other open sources for the same person.
+      // LinkedIn is login-walled (returns HTTP 999). Use multiple strategies
+      // to resolve the person's identity from open sources.
       if (result.handle) {
-        // Try GitHub API with same handle (often same across platforms)
+        // Strategy 1: GitHub API with exact same handle (works when handles match)
         const ghData = await fetchJson(`https://api.github.com/users/${result.handle}`);
         if (ghData?.name) {
           result.facts['name'] = ghData.name;
@@ -131,7 +132,59 @@ async function enrichUrl(url: string): Promise<EnrichedProfile> {
             result.facts['twitter_url'] = `https://x.com/${ghData.twitter_username}`;
           }
         }
-        // Try fetching personal website from GitHub bio (if found)
+
+        // Strategy 2: If GitHub crossref failed, humanize the handle to get a name.
+        // LinkedIn slugs like "joana-martins-70b86320b" → strip numeric suffix → "Joana Martins"
+        if (!result.facts['name']) {
+          const humanized = result.handle
+            .replace(/-[a-f0-9]{7,}$/, '')          // strip hex suffix (LinkedIn UIDs)
+            .replace(/-\d+$/, '')                   // strip trailing numeric suffix
+            .replace(/-/g, ' ')                     // dashes → spaces
+            .replace(/\b\w/g, c => c.toUpperCase()) // title case
+            .trim();
+          if (humanized.length > 1) result.facts['name'] = humanized;
+        }
+
+        // Strategy 3: Web search for the person's name + LinkedIn to find other profiles
+        if (result.facts['name']) {
+          try {
+            const searchQuery = encodeURIComponent(`"${result.facts['name']}" site:linkedin.com OR site:twitter.com OR site:github.com`);
+            const searchRes = await fetchJson(
+              `https://api.duckduckgo.com/?q=${searchQuery}&format=json&no_html=1&skip_disambig=1`
+            );
+            const topics: any[] = [
+              ...(searchRes?.RelatedTopics || []),
+              ...(searchRes?.Results || [])
+            ];
+            for (const t of topics.slice(0, 8)) {
+              const link: string = t?.FirstURL || t?.url || '';
+              if (!link) continue;
+              if (!result.facts['twitter_url'] && (link.includes('twitter.com') || link.includes('x.com'))) {
+                const tHandle = link.match(/(?:twitter|x)\.com\/([^/?#]+)/)?.[1];
+                if (tHandle && !['intent','search','hashtag'].includes(tHandle)) {
+                  result.facts['twitter_handle'] = tHandle;
+                  result.facts['twitter_url'] = `https://x.com/${tHandle}`;
+                }
+              }
+              if (!result.facts['github_url'] && link.includes('github.com')) {
+                const ghHandle = link.match(/github\.com\/([^/?#]+)/)?.[1];
+                if (ghHandle && ghHandle !== 'features' && ghHandle !== 'topics') {
+                  const ghCheck = await fetchJson(`https://api.github.com/users/${ghHandle}`);
+                  if (ghCheck?.name) {
+                    result.facts['github_handle'] = ghHandle;
+                    result.facts['github_url'] = `https://github.com/${ghHandle}`;
+                    if (ghCheck.bio && !result.facts['bio_hint']) result.facts['bio_hint'] = ghCheck.bio;
+                    if (ghCheck.company && !result.facts['company']) result.facts['company'] = ghCheck.company;
+                    if (ghCheck.location && !result.facts['location']) result.facts['location'] = ghCheck.location;
+                    if (ghCheck.blog && !result.facts['website']) result.facts['website'] = ghCheck.blog;
+                  }
+                }
+              }
+            }
+          } catch { /* web search is best-effort */ }
+        }
+
+        // Fetch personal website if found
         if (result.facts['website'] && result.facts['website'].startsWith('http')) {
           const siteText = await fetchHtmlText(result.facts['website']);
           if (siteText) result.facts['site_text'] = siteText.slice(0, 1500);
@@ -398,7 +451,17 @@ Rules:
 // Bio is synthesized by AI from clean facts (no raw concatenation, no navigation junk).
 async function buildAnchorFromFacts(profile: EnrichedProfile, query: string): Promise<any> {
   const f = profile.facts;
-  const name = f['name'] || query.replace(/https?:\/\/\S+/g, '').trim() || 'Unknown';
+  // Name resolution priority: scraped name → query text (strip URLs) → humanized LinkedIn handle
+  const nameFromQuery = query.replace(/https?:\/\/\S+/g, '').trim();
+  const nameFromHandle = f['linkedin_handle']
+    ? f['linkedin_handle']
+        .replace(/-[a-f0-9]{7,}$/, '')
+        .replace(/-\d+$/, '')
+        .replace(/-/g, ' ')
+        .replace(/\b\w/g, (c: string) => c.toUpperCase())
+        .trim()
+    : '';
+  const name = f['name'] || nameFromQuery || nameFromHandle || 'Unknown';
 
   // Get enriched repo data if GitHub profile
   if ((profile.platform === 'github' || f['github_handle']) && f['github_handle'] && !f['top_repos']) {
@@ -497,7 +560,11 @@ async function searchPersonOrCompany(query: string, extraUrls: string[] = []): P
 
   // ANTI-HALLUCINATION: when we have a verified enriched profile, ALWAYS build the anchor
   // from scraped facts only — never trust the AI bio for anchor persons.
-  if (hasAnchor && enrichedProfiles[0]?.facts['name']) {
+  // Also fires when we only have a linkedin_url (handle-humanized name) — better than nothing.
+  const anchorHasUsableName = enrichedProfiles[0]?.facts['name'] ||
+    enrichedProfiles[0]?.facts['linkedin_handle'] ||
+    (cleanQuery && cleanQuery.length > 1);
+  if (hasAnchor && anchorHasUsableName) {
     const anchorEntry = sanitizeSuggestion(await buildAnchorFromFacts(enrichedProfiles[0], cleanQuery || query));
     if (anchorEntry) {
       const anchorKey = anchorEntry.name.toLowerCase().replace(/[^a-z0-9]/g, '');

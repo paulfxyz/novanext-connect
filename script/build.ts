@@ -52,7 +52,11 @@ async function buildAll() {
     outfile: "dist/index.cjs",
     define: {
       "process.env.NODE_ENV": '"production"',
+      // IMPORTANT: never inline secrets — keep as runtime process.env references
+      // Do NOT add OPENROUTER_API_KEY or any secret here.
     },
+    // Prevent esbuild from replacing process.env.X with literal values
+    // by keeping process.env access dynamic at runtime.
     minify: true,
     external: externals,
     logLevel: "info",
