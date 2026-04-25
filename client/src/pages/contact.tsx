@@ -161,7 +161,7 @@ export default function ContactPage() {
             <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '0.75rem', color: 'var(--nova-cyan)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '12px' }}>
               About
             </h2>
-            <p style={{ color: 'rgba(255,255,255,0.75)', lineHeight: 1.75, fontSize: '0.95rem' }}>
+            <p style={{ color: 'rgba(255,255,255,0.75)', lineHeight: 1.75, fontSize: '0.95rem', whiteSpace: 'pre-wrap' }}>
               {contact.bio}
             </p>
           </div>
