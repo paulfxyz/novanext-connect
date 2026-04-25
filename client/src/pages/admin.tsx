@@ -25,6 +25,8 @@ function NovaNextLogo({ size = 32 }: { size?: number }) {
 function SuggestionCard({
   suggestion, onAdd, isAdding
 }: { suggestion: ContactSuggestion; onAdd: (s: ContactSuggestion) => void; isAdding: boolean }) {
+  const [bioExpanded, setBioExpanded] = useState(false);
+
   // Defensive: ensure name is always a string
   const name = suggestion?.name ? String(suggestion.name) : 'Unknown';
   const confidence = Math.round(Math.min(1, Math.max(0, Number(suggestion?.confidence) || 0.5)) * 100);
@@ -36,40 +38,84 @@ function SuggestionCard({
       ? (suggestion.tags as string).split(',').map(t => t.trim()).filter(Boolean)
       : [];
   const safeName = name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+  const bio = suggestion?.bio ? String(suggestion.bio) : '';
+  // Show bio collapsed (4 lines) unless expanded
+  const bioLines = bio.split('\n').join(' ');
+  const isBioLong = bioLines.length > 220;
+
+  // Confidence colour: green > 80%, cyan > 60%, yellow > 40%, else dim
+  const confColor = confidence >= 80 ? '#4ade80' : confidence >= 60 ? 'var(--nova-cyan)' : confidence >= 40 ? '#facc15' : 'rgba(255,255,255,0.3)';
 
   return (
     <div className="nova-card suggestion-card" style={{ padding: '20px', position: 'relative' }}>
-      {/* Confidence */}
-      <div style={{ position: 'absolute', top: '16px', right: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-        <div className="confidence-bar" style={{ width: '50px' }}>
-          <div className="confidence-fill" style={{ width: `${confidence}%` }}/>
+      {/* Confidence badge */}
+      <div style={{ position: 'absolute', top: '14px', right: '14px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+        <div className="confidence-bar" style={{ width: '48px' }}>
+          <div className="confidence-fill" style={{ width: `${confidence}%`, background: confColor }}/>
         </div>
-        <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.5)', fontWeight: 600 }}>{confidence}%</span>
+        <span style={{ fontSize: '0.65rem', color: confColor, fontWeight: 700 }}>{confidence}%</span>
       </div>
 
-      <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start', marginBottom: '12px' }}>
+      {/* Header: avatar + name + title + company */}
+      <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start', marginBottom: '14px' }}>
         <div className="nova-avatar" style={{ width: '52px', height: '52px', fontSize: '1.1rem', flexShrink: 0 }}>
           {initials}
         </div>
-        <div style={{ flex: 1, minWidth: 0, paddingRight: '70px' }}>
-          <h3 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', color: 'white', marginBottom: '2px' }}>
+        <div style={{ flex: 1, minWidth: 0, paddingRight: '64px' }}>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', color: 'white', marginBottom: '3px', lineHeight: 1.2 }}>
             {name}
           </h3>
           {suggestion?.title && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--nova-cyan)', fontWeight: 600 }}>{String(suggestion.title)}</p>
+            <p style={{ fontSize: '0.8rem', color: 'var(--nova-cyan)', fontWeight: 600, marginBottom: '2px' }}>{String(suggestion.title)}</p>
           )}
-          {suggestion?.companyName && (
-            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Building2 size={10}/> {String(suggestion.companyName)}
+          {(suggestion?.companyName || suggestion?.companyRole) && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+              {suggestion?.companyName && (
+                <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Building2 size={10} style={{ flexShrink: 0 }}/>
+                  <span style={{ fontWeight: 600 }}>{String(suggestion.companyName)}</span>
+                </p>
+              )}
+              {suggestion?.companyRole && suggestion?.companyRole !== suggestion?.title && (
+                <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.35)', paddingLeft: '14px' }}>
+                  {String(suggestion.companyRole)}
+                </p>
+              )}
+            </div>
+          )}
+          {suggestion?.location && (
+            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.35)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px' }}>
+              <MapPin size={9}/> {String(suggestion.location)}
             </p>
           )}
         </div>
       </div>
 
-      {suggestion?.bio && (
-        <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.6, marginBottom: '10px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-          {String(suggestion.bio)}
-        </p>
+      {/* Bio — full text, collapsible if long */}
+      {bio && (
+        <div style={{ marginBottom: '12px' }}>
+          <p style={{
+            fontSize: '0.8rem',
+            color: 'rgba(255,255,255,0.65)',
+            lineHeight: 1.65,
+            ...(isBioLong && !bioExpanded ? {
+              display: '-webkit-box',
+              WebkitLineClamp: 4,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden'
+            } : {})
+          }}>
+            {bioLines}
+          </p>
+          {isBioLong && (
+            <button
+              onClick={() => setBioExpanded(!bioExpanded)}
+              style={{ marginTop: '4px', fontSize: '0.72rem', color: 'var(--nova-cyan)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+            >
+              {bioExpanded ? 'Show less ↑' : 'Show more ↓'}
+            </button>
+          )}
+        </div>
       )}
 
       {/* Reason badge */}
@@ -82,19 +128,46 @@ function SuggestionCard({
         </div>
       )}
 
-      {/* Social badges */}
-      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
-        {suggestion?.linkedinUrl && <span className="nova-badge"><Linkedin size={9}/> LinkedIn</span>}
-        {suggestion?.twitterUrl && <span className="nova-badge"><Twitter size={9}/> X</span>}
-        {suggestion?.githubUrl && <span className="nova-badge"><Github size={9}/> GitHub</span>}
-        {suggestion?.website && <span className="nova-badge"><Globe size={9}/> Web</span>}
-        {suggestion?.location && <span className="nova-badge"><MapPin size={9}/> {String(suggestion.location)}</span>}
+      {/* Live social links */}
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        {suggestion?.linkedinUrl && (
+          <a href={String(suggestion.linkedinUrl)} target="_blank" rel="noopener noreferrer"
+            className="nova-badge"
+            style={{ cursor: 'pointer', textDecoration: 'none' }}
+            onClick={e => e.stopPropagation()}>
+            <Linkedin size={9}/> LinkedIn
+          </a>
+        )}
+        {suggestion?.twitterUrl && (
+          <a href={String(suggestion.twitterUrl)} target="_blank" rel="noopener noreferrer"
+            className="nova-badge"
+            style={{ cursor: 'pointer', textDecoration: 'none' }}
+            onClick={e => e.stopPropagation()}>
+            <Twitter size={9}/> X
+          </a>
+        )}
+        {suggestion?.githubUrl && (
+          <a href={String(suggestion.githubUrl)} target="_blank" rel="noopener noreferrer"
+            className="nova-badge"
+            style={{ cursor: 'pointer', textDecoration: 'none' }}
+            onClick={e => e.stopPropagation()}>
+            <Github size={9}/> GitHub
+          </a>
+        )}
+        {suggestion?.website && (
+          <a href={String(suggestion.website)} target="_blank" rel="noopener noreferrer"
+            className="nova-badge"
+            style={{ cursor: 'pointer', textDecoration: 'none' }}
+            onClick={e => e.stopPropagation()}>
+            <Globe size={9}/> Website
+          </a>
+        )}
       </div>
 
       {/* Tags */}
       {tags.length > 0 && (
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
-          {tags.slice(0, 4).map((t, i) => <span key={`${t}-${i}`} className="nova-tag">{t}</span>)}
+          {tags.slice(0, 5).map((t, i) => <span key={`${t}-${i}`} className="nova-tag">{t}</span>)}
         </div>
       )}
 
@@ -188,6 +261,7 @@ export default function AdminPage() {
   const [, navigate] = useLocation();
   const [view, setView] = useState<"research" | "entries" | "import">("research");
   const [searchQuery, setSearchQuery] = useState("");
+  const [profileUrl, setProfileUrl] = useState("");
   const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
   const [addingName, setAddingName] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
@@ -196,6 +270,25 @@ export default function AdminPage() {
   // Auth check
   useEffect(() => {
     if (!getAdminAuth()) navigate("/admin/login");
+  }, []);
+
+  // Pre-fill query from hash param ?q= (set by home page "Research with AI" button)
+  useEffect(() => {
+    const hash = window.location.hash; // e.g. "#/admin?q=Paul+Fleury"
+    const qIndex = hash.indexOf('?');
+    if (qIndex !== -1) {
+      const params = new URLSearchParams(hash.slice(qIndex + 1));
+      const q = params.get('q');
+      if (q) {
+        setSearchQuery(decodeURIComponent(q));
+        // Optionally auto-trigger research after a short delay
+        setTimeout(() => {
+          setSuggestions([]);
+          researchMutation.mutate({ query: decodeURIComponent(q) });
+        }, 400);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const logout = () => {
@@ -210,8 +303,8 @@ export default function AdminPage() {
 
   // Research mutation
   const researchMutation = useMutation({
-    mutationFn: (query: string) =>
-      apiRequest("POST", "/api/admin/research", { query }).then(r => r.json()),
+    mutationFn: ({ query, url }: { query: string; url?: string }) =>
+      apiRequest("POST", "/api/admin/research", { query, url: url || undefined }).then(r => r.json()),
     onSuccess: (data) => {
       if (data.suggestions && data.suggestions.length > 0) {
         setSuggestions(data.suggestions);
@@ -271,7 +364,7 @@ export default function AdminPage() {
     e.preventDefault();
     if (!searchQuery.trim()) return;
     setSuggestions([]);
-    researchMutation.mutate(searchQuery.trim());
+    researchMutation.mutate({ query: searchQuery.trim(), url: profileUrl.trim() || undefined });
   };
 
   const handleAdd = (suggestion: ContactSuggestion) => {
@@ -350,26 +443,42 @@ export default function AdminPage() {
             </div>
 
             {/* Search form */}
-            <form onSubmit={handleSearch} style={{ display: 'flex', gap: '10px', marginBottom: '32px' }}>
-              <div style={{ flex: 1, position: 'relative' }}>
-                <Search size={16} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)', pointerEvents: 'none' }}/>
+            <form onSubmit={handleSearch} style={{ marginBottom: '32px' }}>
+              {/* Name / query row */}
+              <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                <div style={{ flex: 1, position: 'relative' }}>
+                  <Search size={16} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)', pointerEvents: 'none' }}/>
+                  <input
+                    type="text"
+                    className="nova-search"
+                    placeholder="e.g. Pedro Quintas, Startup Lisboa, Hypernova..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    style={{ paddingLeft: '44px', borderRadius: '12px' }}
+                    data-testid="input-admin-search"
+                  />
+                </div>
+                <button type="submit" className="nova-btn-primary" disabled={researchMutation.isPending} style={{ borderRadius: '12px', whiteSpace: 'nowrap' }} data-testid="btn-research">
+                  {researchMutation.isPending ? (
+                    <><RefreshCw size={15} style={{ animation: 'spin 1s linear infinite' }}/> Researching...</>
+                  ) : (
+                    <><Zap size={15}/> Research</>
+                  )}
+                </button>
+              </div>
+              {/* URL / profile link row */}
+              <div style={{ position: 'relative' }}>
+                <Globe size={14} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.25)', pointerEvents: 'none' }}/>
                 <input
-                  type="text"
+                  type="url"
                   className="nova-search"
-                  placeholder="e.g. Pedro Quintas, Startup Lisboa, Hypernova..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  style={{ paddingLeft: '44px', borderRadius: '12px' }}
-                  data-testid="input-admin-search"
+                  placeholder="Profile URL or LinkedIn link (optional) — e.g. https://linkedin.com/in/..."
+                  value={profileUrl}
+                  onChange={e => setProfileUrl(e.target.value)}
+                  style={{ paddingLeft: '40px', borderRadius: '10px', fontSize: '0.82rem', height: '42px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  data-testid="input-admin-url"
                 />
               </div>
-              <button type="submit" className="nova-btn-primary" disabled={researchMutation.isPending} style={{ borderRadius: '12px', whiteSpace: 'nowrap' }} data-testid="btn-research">
-                {researchMutation.isPending ? (
-                  <><RefreshCw size={15} style={{ animation: 'spin 1s linear infinite' }}/> Researching...</>
-                ) : (
-                  <><Zap size={15}/> Research</>
-                )}
-              </button>
             </form>
 
             {/* Loading state */}
