@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
 import { getAdminAuth, setAdminAuth } from "@/lib/adminAuth";
@@ -342,7 +343,7 @@ function EditModal({ contact, onClose, onSaved }: {
 
   const initials = form.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-  return (
+  return createPortal(
     /* Backdrop */
     <div
       onClick={onClose}
@@ -525,7 +526,8 @@ function EditModal({ contact, onClose, onSaved }: {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
