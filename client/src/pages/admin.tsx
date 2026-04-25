@@ -6,7 +6,7 @@ import AdminImport from "./admin-import";
 import {
   Search, Plus, Trash2, X, Users, Building2,
   ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin,
-  Zap, ChevronRight, RefreshCw, LogOut, Upload
+  Zap, ChevronRight, RefreshCw, LogOut, Upload, ExternalLink, ShieldCheck
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -45,15 +45,21 @@ function SuggestionCard({
 
   // Confidence colour: green > 80%, cyan > 60%, yellow > 40%, else dim
   const confColor = confidence >= 80 ? '#4ade80' : confidence >= 60 ? 'var(--nova-cyan)' : confidence >= 40 ? '#facc15' : 'rgba(255,255,255,0.3)';
+  const isScraped = suggestion?.source === 'scraped profile';
 
   return (
     <div className="nova-card suggestion-card" style={{ padding: '20px', position: 'relative' }}>
-      {/* Confidence badge */}
-      <div style={{ position: 'absolute', top: '14px', right: '14px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+      {/* Confidence badge + source */}
+      <div style={{ position: 'absolute', top: '14px', right: '14px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '5px' }}>
         <div className="confidence-bar" style={{ width: '48px' }}>
           <div className="confidence-fill" style={{ width: `${confidence}%`, background: confColor }}/>
         </div>
         <span style={{ fontSize: '0.65rem', color: confColor, fontWeight: 700 }}>{confidence}%</span>
+        {isScraped && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.6rem', color: '#4ade80', fontWeight: 700, background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.25)', borderRadius: '4px', padding: '1px 5px' }}>
+            <ShieldCheck size={8}/> VERIFIED
+          </span>
+        )}
       </div>
 
       {/* Header: avatar + name + title + company */}
@@ -128,41 +134,74 @@ function SuggestionCard({
         </div>
       )}
 
-      {/* Live social links */}
-      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
-        {suggestion?.linkedinUrl && (
-          <a href={String(suggestion.linkedinUrl)} target="_blank" rel="noopener noreferrer"
-            className="nova-badge"
-            style={{ cursor: 'pointer', textDecoration: 'none' }}
-            onClick={e => e.stopPropagation()}>
-            <Linkedin size={9}/> LinkedIn
-          </a>
-        )}
-        {suggestion?.twitterUrl && (
-          <a href={String(suggestion.twitterUrl)} target="_blank" rel="noopener noreferrer"
-            className="nova-badge"
-            style={{ cursor: 'pointer', textDecoration: 'none' }}
-            onClick={e => e.stopPropagation()}>
-            <Twitter size={9}/> X
-          </a>
-        )}
-        {suggestion?.githubUrl && (
-          <a href={String(suggestion.githubUrl)} target="_blank" rel="noopener noreferrer"
-            className="nova-badge"
-            style={{ cursor: 'pointer', textDecoration: 'none' }}
-            onClick={e => e.stopPropagation()}>
-            <Github size={9}/> GitHub
-          </a>
-        )}
-        {suggestion?.website && (
-          <a href={String(suggestion.website)} target="_blank" rel="noopener noreferrer"
-            className="nova-badge"
-            style={{ cursor: 'pointer', textDecoration: 'none' }}
-            onClick={e => e.stopPropagation()}>
-            <Globe size={9}/> Website
-          </a>
-        )}
-      </div>
+      {/* Live social links — always shown, click to verify */}
+      {(suggestion?.linkedinUrl || suggestion?.twitterUrl || suggestion?.githubUrl || suggestion?.website) && (
+        <div style={{ marginBottom: '12px' }}>
+          <p style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.3)', letterSpacing: '0.06em', fontWeight: 700, marginBottom: '6px', textTransform: 'uppercase' }}>Links — click to verify</p>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {suggestion?.linkedinUrl && (
+              <a href={String(suggestion.linkedinUrl)} target="_blank" rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                  fontSize: '0.72rem', fontWeight: 600, padding: '5px 10px',
+                  background: 'rgba(10,102,194,0.15)', border: '1px solid rgba(10,102,194,0.4)',
+                  borderRadius: '8px', color: '#60a5fa', textDecoration: 'none',
+                  cursor: 'pointer',
+                }}
+                onClick={e => e.stopPropagation()}
+                title={String(suggestion.linkedinUrl)}
+              >
+                <Linkedin size={10}/> LinkedIn <ExternalLink size={8} style={{ opacity: 0.5 }}/>
+              </a>
+            )}
+            {suggestion?.twitterUrl && (
+              <a href={String(suggestion.twitterUrl)} target="_blank" rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                  fontSize: '0.72rem', fontWeight: 600, padding: '5px 10px',
+                  background: 'rgba(29,155,240,0.12)', border: '1px solid rgba(29,155,240,0.35)',
+                  borderRadius: '8px', color: '#60c8fa', textDecoration: 'none',
+                  cursor: 'pointer',
+                }}
+                onClick={e => e.stopPropagation()}
+                title={String(suggestion.twitterUrl)}
+              >
+                <Twitter size={10}/> X / Twitter <ExternalLink size={8} style={{ opacity: 0.5 }}/>
+              </a>
+            )}
+            {suggestion?.githubUrl && (
+              <a href={String(suggestion.githubUrl)} target="_blank" rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                  fontSize: '0.72rem', fontWeight: 600, padding: '5px 10px',
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: '8px', color: 'rgba(255,255,255,0.7)', textDecoration: 'none',
+                  cursor: 'pointer',
+                }}
+                onClick={e => e.stopPropagation()}
+                title={String(suggestion.githubUrl)}
+              >
+                <Github size={10}/> GitHub <ExternalLink size={8} style={{ opacity: 0.5 }}/>
+              </a>
+            )}
+            {suggestion?.website && (
+              <a href={String(suggestion.website)} target="_blank" rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                  fontSize: '0.72rem', fontWeight: 600, padding: '5px 10px',
+                  background: 'rgba(0,229,208,0.08)', border: '1px solid rgba(0,229,208,0.25)',
+                  borderRadius: '8px', color: 'var(--nova-cyan)', textDecoration: 'none',
+                  cursor: 'pointer',
+                }}
+                onClick={e => e.stopPropagation()}
+                title={String(suggestion.website)}
+              >
+                <Globe size={10}/> Website <ExternalLink size={8} style={{ opacity: 0.5 }}/>
+              </a>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Tags */}
       {tags.length > 0 && (

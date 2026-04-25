@@ -6,10 +6,10 @@ import { z } from "zod";
 
 const OPENROUTER_API_KEY = "REDACTED_KEY_REMOVED";
 
-// Helper: call OpenRouter with a model — 20 s hard timeout so pplx.app sandbox never hangs
+// Helper: call OpenRouter with a model — 30 s hard timeout (enrichment + AI)
 async function callOpenRouter(model: string, prompt: string): Promise<string> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
+  const timer = setTimeout(() => controller.abort(), 30_000);
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -23,8 +23,8 @@ async function callOpenRouter(model: string, prompt: string): Promise<string> {
       body: JSON.stringify({
         model,
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.3,
-        max_tokens: 1500,
+        temperature: 0.25,
+        max_tokens: 2000,
       })
     });
     if (!response.ok) {
@@ -76,44 +76,194 @@ function sanitizeSuggestion(raw: any): any | null {
   }
 }
 
-// ── URL detector & page scraper ─────────────────────────────────────────────
-// Detects URLs in the query string and fetches readable text from those pages
+// ── URL detector ─────────────────────────────────────────────────────────────
 function extractUrls(text: string): string[] {
   const urlRe = /https?:\/\/[^\s<>"']+/gi;
   return (text.match(urlRe) || []).map(u => u.replace(/[.,;!?)]+$/, ''));
 }
 
-async function fetchPageText(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
+// ── Platform-aware enrichment ────────────────────────────────────────────────
+// Instead of blindly fetching HTML (which LinkedIn/Twitter block), we use
+// platform-specific APIs + open sources to build a structured fact object.
+
+interface EnrichedProfile {
+  platform: string;       // e.g. 'linkedin', 'github', 'twitter', 'website'
+  handle?: string;        // the @handle or slug extracted from the URL
+  url: string;            // the original URL passed in
+  facts: Record<string, string>; // structured key→value facts found
+  rawText?: string;       // any free text extracted (truncated)
+}
+
+async function enrichUrl(url: string): Promise<EnrichedProfile> {
+  const result: EnrichedProfile = { platform: 'unknown', url, facts: {} };
+
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, '');
+    const path = parsed.pathname;
+
+    // ── LinkedIn ──────────────────────────────────────────────────────────────
+    if (host === 'linkedin.com' || host.endsWith('.linkedin.com')) {
+      result.platform = 'linkedin';
+      // Extract handle from /in/<handle> or /company/<handle>
+      const m = path.match(/\/(in|company|school)\/([^/]+)/);
+      if (m) {
+        result.handle = m[2];
+        result.facts['linkedin_handle'] = m[2];
+        result.facts['linkedin_url'] = `https://www.linkedin.com/${m[1]}/${m[2]}/`;
+        result.facts['profile_type'] = m[1] === 'company' ? 'company' : 'person';
+      }
+      // LinkedIn is login-walled (returns HTTP 999). Use the handle to search
+      // other open sources for the same person.
+      if (result.handle) {
+        // Try GitHub API with same handle (often same across platforms)
+        const ghData = await fetchJson(`https://api.github.com/users/${result.handle}`);
+        if (ghData?.name) {
+          result.facts['name'] = ghData.name;
+          result.facts['github_handle'] = result.handle;
+          result.facts['github_url'] = `https://github.com/${result.handle}`;
+          if (ghData.bio) result.facts['bio_hint'] = ghData.bio;
+          if (ghData.company) result.facts['company'] = ghData.company;
+          if (ghData.location) result.facts['location'] = ghData.location;
+          if (ghData.blog) result.facts['website'] = ghData.blog;
+          if (ghData.twitter_username) {
+            result.facts['twitter_handle'] = ghData.twitter_username;
+            result.facts['twitter_url'] = `https://x.com/${ghData.twitter_username}`;
+          }
+        }
+        // Try fetching personal website from GitHub bio (if found)
+        if (result.facts['website'] && result.facts['website'].startsWith('http')) {
+          const siteText = await fetchHtmlText(result.facts['website']);
+          if (siteText) result.facts['site_text'] = siteText.slice(0, 1500);
+        }
+      }
+      return result;
+    }
+
+    // ── GitHub ────────────────────────────────────────────────────────────────
+    if (host === 'github.com') {
+      result.platform = 'github';
+      const m = path.match(/^\/([^/]+)/);
+      if (m) {
+        result.handle = m[1];
+        const ghData = await fetchJson(`https://api.github.com/users/${m[1]}`);
+        if (ghData && !ghData.message) {
+          result.facts['name'] = ghData.name || m[1];
+          result.facts['github_handle'] = m[1];
+          result.facts['github_url'] = `https://github.com/${m[1]}`;
+          if (ghData.bio) result.facts['bio_hint'] = ghData.bio;
+          if (ghData.company) result.facts['company'] = ghData.company;
+          if (ghData.location) result.facts['location'] = ghData.location;
+          if (ghData.blog) result.facts['website'] = ghData.blog;
+          if (ghData.twitter_username) {
+            result.facts['twitter_handle'] = ghData.twitter_username;
+            result.facts['twitter_url'] = `https://x.com/${ghData.twitter_username}`;
+          }
+          // Get top repos for context
+          const repos = await fetchJson(`https://api.github.com/users/${m[1]}/repos?sort=stars&per_page=5`);
+          if (Array.isArray(repos)) {
+            result.facts['top_repos'] = repos.map((r: any) => `${r.name}: ${r.description || ''}`).join('; ');
+          }
+        }
+      }
+      return result;
+    }
+
+    // ── Twitter / X ───────────────────────────────────────────────────────────
+    if (host === 'twitter.com' || host === 'x.com') {
+      result.platform = 'twitter';
+      const m = path.match(/^\/([^/]+)/);
+      if (m && m[1] !== 'i') {
+        result.handle = m[1];
+        result.facts['twitter_handle'] = m[1];
+        result.facts['twitter_url'] = `https://x.com/${m[1]}`;
+        // Fetch og: tags using Twitterbot UA (still public)
+        const html = await fetchHtmlRaw(url, 'Twitterbot/1.0');
+        if (html) {
+          const ogName = html.match(/<meta\s+(?:property=["']og:title["']|name=["']twitter:title["'])\s+content=["']([^"']{2,200})["']/i)?.[1];
+          const ogDesc = html.match(/<meta\s+(?:property=["']og:description["']|name=["']twitter:description["'])\s+content=["']([^"']{2,500})["']/i)?.[1];
+          if (ogName) result.facts['name'] = ogName.replace(/ \(@.*\)/, '').trim();
+          if (ogDesc) result.facts['bio_hint'] = ogDesc;
+        }
+        // Try GitHub with same handle
+        const ghData = await fetchJson(`https://api.github.com/users/${m[1]}`);
+        if (ghData?.name) {
+          if (!result.facts['name']) result.facts['name'] = ghData.name;
+          result.facts['github_handle'] = m[1];
+          result.facts['github_url'] = `https://github.com/${m[1]}`;
+          if (ghData.blog) result.facts['website'] = ghData.blog;
+        }
+      }
+      return result;
+    }
+
+    // ── Generic website ───────────────────────────────────────────────────────
+    result.platform = 'website';
+    result.facts['website'] = url;
+    const html = await fetchHtmlRaw(url, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36');
+    if (html) {
+      // Extract og: / twitter: meta tags
+      const ogTitle = html.match(/<meta[^>]+(?:property=["']og:title["'])[^>]+content=["']([^"']{2,200})["']/i)?.[1]
+                   || html.match(/<meta[^>]+content=["']([^"']{2,200})["'][^>]+property=["']og:title["']/i)?.[1];
+      const ogDesc  = html.match(/<meta[^>]+(?:property=["']og:description["'])[^>]+content=["']([^"']{5,500})["']/i)?.[1]
+                   || html.match(/<meta[^>]+content=["']([^"']{5,500})["'][^>]+property=["']og:description["']/i)?.[1];
+      const pageTitle = html.match(/<title[^>]*>([^<]{2,200})<\/title>/i)?.[1];
+      if (ogTitle) result.facts['name'] = ogTitle;
+      else if (pageTitle) result.facts['site_title'] = pageTitle;
+      if (ogDesc) result.facts['bio_hint'] = ogDesc;
+      result.rawText = stripHtml(html).slice(0, 2000);
+    }
+    return result;
+  } catch {
+    return result;
+  }
+}
+
+// Low-level helpers ─────────────────────────────────────────────────────────
+async function fetchJson(url: string, timeoutMs = 8000): Promise<any> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'Accept': 'application/json', 'User-Agent': 'NovaNEXT-Research/1.2' }
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; } finally { clearTimeout(t); }
+}
+
+async function fetchHtmlRaw(url: string, ua: string, timeoutMs = 8000): Promise<string> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; NovaNEXT-Research/1.0)',
-        'Accept': 'text/html,application/xhtml+xml,*/*',
+        'User-Agent': ua,
+        'Accept': 'text/html,*/*;q=0.8',
         'Accept-Language': 'en,pt;q=0.9',
       }
     });
-    if (!res.ok) return '';
-    const html = await res.text();
-    // Strip tags, collapse whitespace — keep first 4000 chars
-    return html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/\s{2,}/g, ' ')
-      .trim()
-      .slice(0, 4000);
-  } catch {
-    return '';
-  } finally {
-    clearTimeout(timer);
-  }
+    if (!r.ok) return '';
+    return await r.text();
+  } catch { return ''; } finally { clearTimeout(t); }
+}
+
+async function fetchHtmlText(url: string, timeoutMs = 8000): Promise<string> {
+  const html = await fetchHtmlRaw(url, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/121.0 Safari/537.36', timeoutMs);
+  return stripHtml(html).slice(0, 2000);
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&#\d+;/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 // Parse model JSON output into a clean array
@@ -132,83 +282,113 @@ function parseModelOutput(raw: string): any[] {
   }
 }
 
+// Build prompt string — called once we know whether we have anchor context or not
+function buildPrompt(query: string, anchorContext: string, hasAnchor: boolean): string {
+  return `You are a precision research assistant for NovaNEXT — a major AI, startup & investment conference in Aveiro, Portugal on 17 June 2026. The conference attracts founders, investors, AI researchers, and tech leaders from the Portuguese/Lusophone ecosystem and wider Europe.
+
+Your task: find 4 DISTINCT real people or companies matching the query: "${query}"${anchorContext}
+
+Rules:
+${hasAnchor ? `- FIRST result MUST be the EXACT person/company identified by the ANCHOR above. Use the verified facts (name, handles, links) verbatim. DO NOT invent or modify any URLs — use exactly what was provided. Set confidence ≥ 0.93 and source to "scraped profile".
+- Anchor github_url → set githubUrl. Anchor twitter_url → set twitterUrl. Anchor linkedin_url → set linkedinUrl. Anchor website → set website.
+` : ''}- Results 2-4: real people/companies with same/similar name, OR closely related figures in the Portuguese/European tech ecosystem
+- Prioritise Portuguese, Lusophone, and European AI/startup/VC figures
+- Write a DETAILED bio of 3-5 sentences with specific facts (companies founded, roles held, technologies, achievements, Portuguese/tech connections)
+- Only put REAL, VERIFIABLE URLs in link fields. If unsure, set to null. Do NOT fabricate handles.
+- Use canonical URL form: linkedin.com/in/handle, x.com/handle, github.com/handle
+
+Return EXACTLY 4 items as a raw JSON array (no markdown, no wrapper). Each item:
+{"name":"Full Name","title":"Role","bio":"3-5 sentence bio","avatarUrl":null,"location":"City, Country","companyName":"Company","companyRole":"Role at company","website":"https://... or null","linkedinUrl":"https://linkedin.com/in/handle or null","twitterUrl":"https://x.com/handle or null","githubUrl":"https://github.com/handle or null","tags":["AI","Startup"],"confidence":0.0,"source":"scraped profile or knowledge base","reason":"Why attend NovaNEXT 2026?"}`;
+}
+
 // ── Main research function ────────────────────────────────────────────────────
-// Accepts a free-text query (may contain URLs). Scrapes any linked pages for
-// grounding context, then queries 3 AI models in parallel asking for 4 results
-// each → deduplicates → returns up to 10 sorted by confidence.
 async function searchPersonOrCompany(query: string, extraUrls: string[] = []): Promise<any[]> {
-  // 1. Extract URLs embedded in the query itself
+  // 1. Extract inline URLs from query
   const inlineUrls = extractUrls(query);
   const cleanQuery = query.replace(/https?:\/\/[^\s<>"']+/gi, '').replace(/\s{2,}/g, ' ').trim();
   const allUrls = [...new Set([...inlineUrls, ...extraUrls])];
 
-  // 2. Fetch page text from any detected URLs (in parallel, 10s each)
-  let pageContext = '';
-  if (allUrls.length > 0) {
-    const texts = await Promise.allSettled(allUrls.map(fetchPageText));
-    const joined = texts
-      .filter(r => r.status === 'fulfilled' && r.value)
-      .map((r: any) => r.value as string)
-      .join('\n\n---\n\n');
-    if (joined) {
-      pageContext = `\n\nADDITIONAL CONTEXT scraped from provided URLs (use this to anchor your research — the person/company IS the one described here):\n${joined.slice(0, 6000)}`;
-    }
-  }
-
-  // 3. Build the prompt — ask for 4 results per model (3 models × 4 = up to 12, dedup to 10)
-  const prompt = `You are a precision researcher for NovaNEXT, a major tech & AI investment conference in Aveiro, Portugal on 17 June 2026. The conference focuses on AI, startups, investors, Portuguese/Lusophone tech ecosystems, and European deep-tech.
-
-Search your knowledge for people or companies named or related to: "${cleanQuery || query}"${
-  pageContext
-}
-
-Return EXACTLY 4 distinct suggestions as a JSON array. Each item must be a real person OR real company. Rules:
-- If page context was provided above: the FIRST result MUST be the exact person/company from that page, with high confidence (0.9+). Use the scraped data to fill all fields accurately.
-- Subsequent results: other people/companies with the same or similar name, or closely related figures who'd attend NovaNEXT Portugal 2026
-- Prioritise: Portuguese/Lusophone tech ecosystem, European AI/startup/VC, international figures active in Portugal
-- Homonyms: always prefer the European/Portuguese tech context unless context proves otherwise
-- Write a DETAILED bio of 3-5 sentences — be specific about their work, achievements, and connection to Portugal/tech
-- ALL URLs must be real and verifiable. If unsure, set to null
-
-For each suggestion return this EXACT JSON structure (no extra fields):
-{
-  "type": "person" or "company",
-  "name": "Full Name",
-  "title": "Current job title or role",
-  "bio": "Detailed 3-5 sentence bio with specifics",
-  "avatarUrl": null,
-  "location": "City, Country",
-  "companyName": "Employer or company name (if person)",
-  "companyRole": "Their role at the company",
-  "website": "https://personal-site.com or null",
-  "linkedinUrl": "https://linkedin.com/in/handle or null",
-  "twitterUrl": "https://x.com/handle or null",
-  "githubUrl": "https://github.com/handle or null",
-  "tags": ["3-6 relevant tags like AI, Startup, Investor, Portugal, Speaker"],
-  "confidence": 0.0 to 1.0,
-  "source": "knowledge base" or "scraped profile",
-  "reason": "1-2 sentences: why this specific person/company would attend NovaNEXT 2026 in Aveiro, Portugal"
-}
-
-Return ONLY a valid JSON array. No markdown, no explanation, no wrapper object.`;
-
-  // 4. Query 3 models in parallel
   const models = [
     "anthropic/claude-3.5-haiku",
     "google/gemini-flash-1.5",
     "openai/gpt-4o-mini",
   ];
 
-  const results = await Promise.allSettled(
-    models.map(model => callOpenRouter(model, prompt))
+  if (allUrls.length === 0) {
+    // ── No URLs: build prompt immediately, fire all models at once
+    const prompt = buildPrompt(cleanQuery || query, '', false);
+    const results = await Promise.allSettled(models.map(m => callOpenRouter(m, prompt)));
+    return mergeResults(results, [], false).slice(0, 10);
+  }
+
+  // ── Has URLs: run enrichment AND all AI models simultaneously
+  // Both happen in parallel. Once enrichment completes we know the anchor person.
+  // We inject their verified URLs directly into the first AI result (no second round-trip).
+  const promptWithoutAnchor = buildPrompt(
+    `${cleanQuery || query} (Note: a specific profile URL was provided — the FIRST result must match the person/company at that URL)`,
+    '', false
   );
 
-  // 5. Merge, deduplicate, sanitize
+  const [enrichResults, aiResults] = await Promise.all([
+    Promise.allSettled(allUrls.map(enrichUrl)),
+    Promise.allSettled(models.map(m => callOpenRouter(m, promptWithoutAnchor))),
+  ]);
+
+  // Process enrichment
+  const enrichedProfiles: EnrichedProfile[] = enrichResults
+    .filter(r => r.status === 'fulfilled')
+    .map((r: any) => r.value as EnrichedProfile)
+    .filter(p => Object.keys(p.facts).length > 0 || p.rawText);
+
+  const hasAnchor = enrichedProfiles.length > 0;
+
+  // Merge AI results, injecting verified URLs into the first slot if enrichment found data
+  const suggestions = mergeResults(aiResults, enrichedProfiles, hasAnchor);
+
+  // If enrichment found a name and the first AI result doesn't match well, prepend the anchor
+  if (hasAnchor && enrichedProfiles[0]?.facts['name']) {
+    const anchorName = enrichedProfiles[0].facts['name'].toLowerCase().replace(/[^a-z0-9]/g, '');
+    const firstKey   = suggestions[0]?.name?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
+    if (firstKey !== anchorName && !firstKey.includes(anchorName.slice(0, 6))) {
+      // Build an anchor entry directly from enriched facts
+      const profile = enrichedProfiles[0];
+      const anchorEntry = sanitizeSuggestion({
+        name:        profile.facts['name'] || query,
+        title:       'Internet Entrepreneur',
+        bio:         profile.facts['site_text'] || profile.facts['bio_hint'] || `${profile.facts['name']} — profile found at ${profile.url}`,
+        location:    profile.facts['location'] || null,
+        companyName: profile.facts['company'] || null,
+        website:     profile.facts['website'] || null,
+        linkedinUrl: profile.facts['linkedin_url'] || null,
+        githubUrl:   profile.facts['github_url'] || null,
+        twitterUrl:  profile.facts['twitter_url'] || null,
+        tags:        profile.facts['top_repos'] ? ['Tech', 'Developer'] : ['Tech'],
+        confidence:  0.95,
+        source:      'scraped profile',
+        reason:      `Profile retrieved directly from ${profile.platform} via provided URL.`,
+      });
+      if (anchorEntry) {
+        const anchorKey = anchorEntry.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const filtered = suggestions.filter(s => s.name.toLowerCase().replace(/[^a-z0-9]/g, '') !== anchorKey);
+        return [anchorEntry, ...filtered.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))].slice(0, 10);
+      }
+    }
+  }
+
+  const [first, ...rest] = suggestions;
+  if (!first) return [];
+  return [first, ...rest.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))].slice(0, 10);
+}
+
+// Helper: merge model results, inject verified URLs from enrichment
+function mergeResults(
+  results: PromiseSettledResult<string>[],
+  enrichedProfiles: EnrichedProfile[],
+  hasAnchor: boolean
+): any[] {
   const allSuggestions: any[] = [];
   const seen = new Set<string>();
-
-  // If we have page context, boost the first result from each model
-  const hasContext = pageContext.length > 0;
+  let anchorPlaced = false;
 
   for (const result of results) {
     if (result.status !== 'fulfilled') continue;
@@ -216,20 +396,34 @@ Return ONLY a valid JSON array. No markdown, no explanation, no wrapper object.`
     items.forEach((item, idx) => {
       const sanitized = sanitizeSuggestion(item);
       if (!sanitized) return;
-      // Boost confidence of first item when we had page context
-      if (hasContext && idx === 0) sanitized.confidence = Math.max(sanitized.confidence, 0.9);
+
+      if (hasAnchor && idx === 0) {
+        sanitized.confidence = Math.max(sanitized.confidence, 0.93);
+        sanitized.source = 'scraped profile';
+        // Override with verified URLs — never trust AI-hallucinated handles
+        for (const profile of enrichedProfiles) {
+          if (profile.facts['linkedin_url']) sanitized.linkedinUrl = profile.facts['linkedin_url'];
+          if (profile.facts['github_url'])   sanitized.githubUrl   = profile.facts['github_url'];
+          if (profile.facts['twitter_url'])  sanitized.twitterUrl  = profile.facts['twitter_url'];
+          if (profile.facts['website'])      sanitized.website     = profile.facts['website'];
+          if (profile.facts['name'])         sanitized.name        = profile.facts['name'];
+        }
+      }
+
       const key = sanitized.name.toLowerCase().replace(/[^a-z0-9]/g, '');
       if (!seen.has(key)) {
         seen.add(key);
-        allSuggestions.push(sanitized);
+        if (hasAnchor && idx === 0 && !anchorPlaced) {
+          allSuggestions.unshift(sanitized);
+          anchorPlaced = true;
+        } else {
+          allSuggestions.push(sanitized);
+        }
       }
     });
   }
 
-  // 6. Sort by confidence desc, return up to 10
-  return allSuggestions
-    .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
-    .slice(0, 10);
+  return allSuggestions;
 }
 
 export function registerRoutes(httpServer: Server, app: Express): void {
