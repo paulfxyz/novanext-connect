@@ -229,26 +229,84 @@ function SuggestionCard({
 // ── Entry Row ──────────────────────────────────────────────────────────────
 function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: number) => void }) {
   const [confirming, setConfirming] = useState(false);
-  const [editingBio, setEditingBio] = useState(false);
-  const [bioValue, setBioValue] = useState(contact.bio || '');
+  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [bioValue, setBioValue] = useState(contact.bio || '');
+  const [links, setLinks] = useState({
+    linkedinUrl: contact.linkedinUrl || '',
+    twitterUrl:  contact.twitterUrl  || '',
+    githubUrl:   contact.githubUrl   || '',
+    website:     contact.website     || '',
+  });
   const { toast } = useToast();
 
-  const initials = contact.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  const tags: string[] = (() => { try { return JSON.parse(contact.tags || "[]"); } catch { return []; } })();
+  const initials = contact.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const tags: string[] = (() => { try { return JSON.parse(contact.tags || '[]'); } catch { return []; } })();
 
-  async function saveBio() {
+  function openEdit() {
+    setBioValue(contact.bio || '');
+    setLinks({
+      linkedinUrl: contact.linkedinUrl || '',
+      twitterUrl:  contact.twitterUrl  || '',
+      githubUrl:   contact.githubUrl   || '',
+      website:     contact.website     || '',
+    });
+    setEditing(true);
+  }
+
+  async function saveAll() {
     setSaving(true);
     try {
-      await apiRequest('PATCH', `/api/admin/contacts/${contact.id}`, { bio: bioValue.trim() || null });
+      await apiRequest('PATCH', `/api/admin/contacts/${contact.id}`, {
+        bio:         bioValue.trim()        || null,
+        linkedinUrl: links.linkedinUrl.trim() || null,
+        twitterUrl:  links.twitterUrl.trim()  || null,
+        githubUrl:   links.githubUrl.trim()   || null,
+        website:     links.website.trim()     || null,
+      });
       queryClient.invalidateQueries({ queryKey: ['/api/contacts'] });
-      setEditingBio(false);
-      toast({ title: 'Bio updated' });
+      setEditing(false);
+      toast({ title: 'Contact updated' });
     } catch {
-      toast({ title: 'Failed to save bio', variant: 'destructive' });
+      toast({ title: 'Failed to save', variant: 'destructive' });
     } finally {
       setSaving(false);
     }
+  }
+
+  // Field helper — renders a labelled input with icon
+  function LinkField({ label, icon, field, placeholder }: {
+    label: string; icon: React.ReactNode; field: keyof typeof links; placeholder: string;
+  }) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <label style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '5px' }}>
+          {icon} {label}
+        </label>
+        <input
+          type="url"
+          value={links[field]}
+          onChange={e => setLinks(l => ({ ...l, [field]: e.target.value }))}
+          placeholder={placeholder}
+          data-testid={`input-${field}-${contact.id}`}
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '7px',
+            padding: '8px 10px',
+            color: 'white',
+            fontSize: '0.78rem',
+            fontFamily: 'var(--font-body)',
+            outline: 'none',
+            width: '100%',
+            boxSizing: 'border-box' as const,
+            transition: 'border-color 0.15s ease',
+          }}
+          onFocus={e => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.4)'; }}
+          onBlur={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+        />
+      </div>
+    );
   }
 
   return (
@@ -260,7 +318,7 @@ function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: numb
         {/* Avatar */}
         <div className="nova-avatar" style={{ width: '40px', height: '40px', fontSize: '0.85rem', flexShrink: 0 }}>
           {contact.avatarUrl
-            ? <img src={contact.avatarUrl} alt={contact.name} onError={(e) => { (e.target as HTMLImageElement).style.display='none'; }}/>
+            ? <img src={contact.avatarUrl} alt={contact.name} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
             : initials}
         </div>
         {/* Info */}
@@ -272,38 +330,37 @@ function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: numb
             {tags.slice(0, 2).map(t => <span key={t} className="nova-tag" style={{ fontSize: '0.6rem' }}>{t}</span>)}
           </div>
           <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', marginTop: '1px' }}>
-            {contact.title || '—'}{contact.companyName ? ` · ${contact.companyName}` : ''}
+            {contact.title || '\u2014'}{contact.companyName ? ` \u00b7 ${contact.companyName}` : ''}
           </p>
-          {/* Bio preview — one-line teaser */}
-          {!editingBio && (
+          {!editing && (
             <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.3)', marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '340px' }}>
               {contact.bio
                 ? contact.bio
-                : <span style={{ fontStyle: 'italic', color: 'rgba(255,255,255,0.18)' }}>No bio — click ✎ to add</span>}
+                : <span style={{ fontStyle: 'italic', color: 'rgba(255,255,255,0.18)' }}>No bio \u2014 click \u270e to edit</span>}
             </p>
           )}
         </div>
-        {/* Social icons */}
+        {/* Social presence indicators */}
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           {contact.linkedinUrl && <Linkedin size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-          {contact.twitterUrl && <Twitter size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-          {contact.githubUrl && <Github size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+          {contact.twitterUrl  && <Twitter  size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+          {contact.githubUrl   && <Github   size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+          {contact.website     && <Globe    size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
         </div>
         {/* Actions */}
         <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
-          {/* Edit bio toggle */}
           <button
-            title={editingBio ? 'Cancel edit' : 'Edit bio'}
+            title={editing ? 'Cancel edit' : 'Edit bio & links'}
             style={{
               padding: '6px',
-              color: editingBio ? 'var(--nova-cyan)' : 'rgba(255,255,255,0.3)',
-              background: editingBio ? 'rgba(0,229,208,0.1)' : 'none',
-              border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease'
+              color: editing ? 'var(--nova-cyan)' : 'rgba(255,255,255,0.3)',
+              background: editing ? 'rgba(0,229,208,0.1)' : 'none',
+              border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease',
             }}
-            onMouseEnter={e => { if (!editingBio) (e.currentTarget as HTMLElement).style.color = 'var(--nova-cyan)'; }}
-            onMouseLeave={e => { if (!editingBio) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.3)'; }}
-            onClick={() => { setEditingBio(!editingBio); if (!editingBio) setBioValue(contact.bio || ''); }}
-            data-testid={`btn-edit-bio-${contact.id}`}>
+            onMouseEnter={e => { if (!editing) (e.currentTarget as HTMLElement).style.color = 'var(--nova-cyan)'; }}
+            onMouseLeave={e => { if (!editing) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.3)'; }}
+            onClick={() => editing ? setEditing(false) : openEdit()}
+            data-testid={`btn-edit-${contact.id}`}>
             <Pencil size={14}/>
           </button>
           <Link href={`/contact/${contact.slug}`}>
@@ -338,66 +395,68 @@ function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: numb
         </div>
       </div>
 
-      {/* Bio edit panel */}
-      {editingBio && (
-        <div style={{ padding: '0 16px 14px 70px', background: 'rgba(0,229,208,0.03)', borderTop: '1px solid rgba(0,229,208,0.08)' }}>
-          <p style={{ fontSize: '0.68rem', color: 'var(--nova-cyan)', marginBottom: '8px', letterSpacing: '0.05em', textTransform: 'uppercase', opacity: 0.8 }}>
-            Bio — {contact.name}
+      {/* Edit panel — bio + social links */}
+      {editing && (
+        <div style={{ padding: '0 16px 16px 70px', background: 'rgba(0,229,208,0.03)', borderTop: '1px solid rgba(0,229,208,0.08)' }}>
+          <p style={{ fontSize: '0.68rem', color: 'var(--nova-cyan)', margin: '12px 0 10px', letterSpacing: '0.05em', textTransform: 'uppercase', opacity: 0.8 }}>
+            Editing \u2014 {contact.name}
           </p>
-          <textarea
-            value={bioValue}
-            onChange={e => setBioValue(e.target.value)}
-            placeholder="Write a short bio... (2-3 sentences about who they are and what they build)"
-            rows={3}
-            data-testid={`textarea-bio-${contact.id}`}
-            style={{
-              width: '100%',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(0,229,208,0.2)',
-              borderRadius: '8px',
-              padding: '10px 12px',
-              color: 'white',
-              fontSize: '0.8rem',
-              lineHeight: 1.6,
-              resize: 'vertical',
-              fontFamily: 'var(--font-body)',
-              outline: 'none',
-              boxSizing: 'border-box',
-            }}
-            onFocus={e => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.5)'; }}
-            onBlur={e => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.2)'; }}
-          />
-          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+
+          {/* Bio */}
+          <div style={{ marginBottom: '14px' }}>
+            <label style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '5px' }}>
+              Bio
+            </label>
+            <textarea
+              value={bioValue}
+              onChange={e => setBioValue(e.target.value)}
+              placeholder="2-3 sentences about who they are and what they build..."
+              rows={3}
+              data-testid={`textarea-bio-${contact.id}`}
+              style={{
+                width: '100%', background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
+                padding: '10px 12px', color: 'white', fontSize: '0.8rem',
+                lineHeight: 1.6, resize: 'vertical', fontFamily: 'var(--font-body)',
+                outline: 'none', boxSizing: 'border-box' as const, transition: 'border-color 0.15s ease',
+              }}
+              onFocus={e => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.4)'; }}
+              onBlur={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+            />
+          </div>
+
+          {/* Social links — 2-column grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
+            <LinkField label="LinkedIn" icon={<Linkedin size={11}/>} field="linkedinUrl" placeholder="https://linkedin.com/in/handle" />
+            <LinkField label="Twitter / X" icon={<Twitter size={11}/>} field="twitterUrl" placeholder="https://x.com/handle" />
+            <LinkField label="GitHub" icon={<Github size={11}/>} field="githubUrl" placeholder="https://github.com/handle" />
+            <LinkField label="Website" icon={<Globe size={11}/>} field="website" placeholder="https://example.com" />
+          </div>
+
+          {/* Save / Cancel */}
+          <div style={{ display: 'flex', gap: '8px' }}>
             <button
-              onClick={saveBio}
+              onClick={saveAll}
               disabled={saving}
-              data-testid={`btn-save-bio-${contact.id}`}
+              data-testid={`btn-save-${contact.id}`}
               style={{
                 display: 'flex', alignItems: 'center', gap: '5px',
-                padding: '7px 14px',
+                padding: '7px 16px',
                 background: 'linear-gradient(135deg, rgba(0,229,208,0.2), rgba(32,32,200,0.2))',
-                border: '1px solid rgba(0,229,208,0.35)',
-                borderRadius: '7px',
-                color: 'var(--nova-cyan)',
-                fontSize: '0.75rem',
-                fontWeight: 600,
+                border: '1px solid rgba(0,229,208,0.35)', borderRadius: '7px',
+                color: 'var(--nova-cyan)', fontSize: '0.75rem', fontWeight: 600,
                 cursor: saving ? 'not-allowed' : 'pointer',
-                opacity: saving ? 0.6 : 1,
-                transition: 'all 0.15s ease',
+                opacity: saving ? 0.6 : 1, transition: 'all 0.15s ease',
               }}
             >
-              <Check size={13}/> {saving ? 'Saving...' : 'Save bio'}
+              <Check size={13}/> {saving ? 'Saving...' : 'Save'}
             </button>
             <button
-              onClick={() => setEditingBio(false)}
+              onClick={() => setEditing(false)}
               style={{
-                padding: '7px 12px',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: '7px',
-                color: 'rgba(255,255,255,0.4)',
-                fontSize: '0.75rem',
-                cursor: 'pointer',
+                padding: '7px 12px', background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)', borderRadius: '7px',
+                color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', cursor: 'pointer',
               }}
             >
               Cancel
@@ -408,7 +467,6 @@ function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: numb
     </div>
   );
 }
-
 // ── Main Admin Page ─────────────────────────────────────────────────────────
 export default function AdminPage() {
   const [, navigate] = useLocation();
