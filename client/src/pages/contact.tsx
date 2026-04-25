@@ -10,7 +10,7 @@ function NovaNextLogo({ size = 32 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-label="NovaNEXT">
       <rect width="40" height="40" rx="8" fill="#2020C8"/>
-      <path d="M6 30V10h5l9 14 9-14h5v20h-5V17L20 30l-9-13v13z" fill="#00E5D0"/>
+      <path d="M8 28V12h4l10 12V12h4v16h-4L12 16v12z" fill="#00E5D0"/>
     </svg>
   );
 }

@@ -17,7 +17,7 @@ function NovaNextLogo({ size = 32 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="NovaNEXT">
       <rect width="40" height="40" rx="8" fill="#2020C8"/>
-      <path d="M7 28V12h4.5l8.5 12 8.5-12H33v16h-4V18L20 28 11 18v10z" fill="#00E5D0"/>
+      <path d="M8 28V12h4l10 12V12h4v16h-4L12 16v12z" fill="#00E5D0"/>
     </svg>
   );
 }
@@ -227,46 +227,69 @@ function SuggestionCard({
 }
 
 // ── Entry Row ──────────────────────────────────────────────────────────────
-function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: number) => void }) {
-  const [confirming, setConfirming] = useState(false);
-  const [editing, setEditing] = useState(false);
+// ── Edit Modal ──────────────────────────────────────────────────────────────
+function EditModal({ contact, onClose, onSaved }: {
+  contact: Contact;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
   const [saving, setSaving] = useState(false);
-  const [bioValue, setBioValue] = useState(contact.bio || '');
-  const [links, setLinks] = useState({
+
+  // Parse existing tags
+  const parseTags = (raw: string | null | undefined): string[] => {
+    try { return JSON.parse(raw || '[]'); } catch { return []; }
+  };
+
+  const [form, setForm] = useState({
+    name:        contact.name        || '',
+    title:       contact.title       || '',
+    companyName: contact.companyName || '',
+    companyRole: contact.companyRole || '',
+    location:    contact.location    || '',
+    bio:         contact.bio         || '',
     linkedinUrl: contact.linkedinUrl || '',
     twitterUrl:  contact.twitterUrl  || '',
     githubUrl:   contact.githubUrl   || '',
     website:     contact.website     || '',
   });
-  const { toast } = useToast();
+  const [tags, setTags]         = useState<string[]>(parseTags(contact.tags));
+  const [tagInput, setTagInput] = useState('');
 
-  const initials = contact.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  const tags: string[] = (() => { try { return JSON.parse(contact.tags || '[]'); } catch { return []; } })();
-
-  function openEdit() {
-    setBioValue(contact.bio || '');
-    setLinks({
-      linkedinUrl: contact.linkedinUrl || '',
-      twitterUrl:  contact.twitterUrl  || '',
-      githubUrl:   contact.githubUrl   || '',
-      website:     contact.website     || '',
-    });
-    setEditing(true);
+  function addTag(raw: string) {
+    const t = raw.trim().replace(/,+$/, '').trim();
+    if (t && !tags.includes(t)) setTags(prev => [...prev, t]);
+    setTagInput('');
   }
 
-  async function saveAll() {
+  function removeTag(t: string) { setTags(prev => prev.filter(x => x !== t)); }
+
+  function handleTagKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(tagInput); }
+    if (e.key === 'Backspace' && !tagInput && tags.length) removeTag(tags[tags.length - 1]);
+  }
+
+  async function save() {
+    if (!form.name.trim()) { toast({ title: 'Name is required', variant: 'destructive' }); return; }
     setSaving(true);
     try {
       await apiRequest('PATCH', `/api/admin/contacts/${contact.id}`, {
-        bio:         bioValue.trim()        || null,
-        linkedinUrl: links.linkedinUrl.trim() || null,
-        twitterUrl:  links.twitterUrl.trim()  || null,
-        githubUrl:   links.githubUrl.trim()   || null,
-        website:     links.website.trim()     || null,
+        name:        form.name.trim()        || null,
+        title:       form.title.trim()       || null,
+        companyName: form.companyName.trim() || null,
+        companyRole: form.companyRole.trim() || null,
+        location:    form.location.trim()    || null,
+        bio:         form.bio.trim()         || null,
+        linkedinUrl: form.linkedinUrl.trim() || null,
+        twitterUrl:  form.twitterUrl.trim()  || null,
+        githubUrl:   form.githubUrl.trim()   || null,
+        website:     form.website.trim()     || null,
+        tags:        JSON.stringify(tags),
       });
       queryClient.invalidateQueries({ queryKey: ['/api/contacts'] });
-      setEditing(false);
-      toast({ title: 'Contact updated' });
+      toast({ title: 'Saved' });
+      onSaved();
+      onClose();
     } catch {
       toast({ title: 'Failed to save', variant: 'destructive' });
     } finally {
@@ -274,197 +297,346 @@ function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: numb
     }
   }
 
-  // Field helper — renders a labelled input with icon
-  function LinkField({ label, icon, field, placeholder }: {
-    label: string; icon: React.ReactNode; field: keyof typeof links; placeholder: string;
-  }) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <label style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '5px' }}>
-          {icon} {label}
-        </label>
-        <input
-          type="url"
-          value={links[field]}
-          onChange={e => setLinks(l => ({ ...l, [field]: e.target.value }))}
-          placeholder={placeholder}
-          data-testid={`input-${field}-${contact.id}`}
-          style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '7px',
-            padding: '8px 10px',
-            color: 'white',
-            fontSize: '0.78rem',
-            fontFamily: 'var(--font-body)',
-            outline: 'none',
-            width: '100%',
-            boxSizing: 'border-box' as const,
-            transition: 'border-color 0.15s ease',
-          }}
-          onFocus={e => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.4)'; }}
-          onBlur={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
-        />
-      </div>
-    );
-  }
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  // Lock body scroll while open
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
+  const field = (
+    label: string,
+    key: keyof typeof form,
+    placeholder: string,
+    type: 'input' | 'url' = 'input',
+    icon?: React.ReactNode
+  ) => (
+    <div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.68rem', color: 'rgba(255,255,255,0.45)', letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '6px' }}>
+        {icon} {label}
+      </label>
+      <input
+        type={type === 'url' ? 'url' : 'text'}
+        value={form[key]}
+        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+        placeholder={placeholder}
+        data-testid={`modal-input-${key}-${contact.id}`}
+        style={{
+          width: '100%', background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
+          padding: '10px 12px', color: 'white', fontSize: '0.85rem',
+          fontFamily: 'var(--font-body)', outline: 'none',
+          boxSizing: 'border-box' as const, transition: 'border-color 0.15s',
+        }}
+        onFocus={e  => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.5)'; }}
+        onBlur={e   => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+      />
+    </div>
+  );
+
+  const initials = form.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
   return (
-    <div style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-      {/* Main row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', transition: 'background 0.15s ease' }}
-        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(32,32,200,0.06)'; }}
-        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}>
-        {/* Avatar */}
-        <div className="nova-avatar" style={{ width: '40px', height: '40px', fontSize: '0.85rem', flexShrink: 0 }}>
-          {contact.avatarUrl
-            ? <img src={contact.avatarUrl} alt={contact.name} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
-            : initials}
-        </div>
-        {/* Info */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'white', fontSize: '0.9rem' }}>
-              {contact.name}
-            </span>
-            {tags.slice(0, 2).map(t => <span key={t} className="nova-tag" style={{ fontSize: '0.6rem' }}>{t}</span>)}
+    /* Backdrop */
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        background: 'rgba(8,8,24,0.88)',
+        backdropFilter: 'blur(8px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '16px',
+      }}
+    >
+      {/* Modal panel — stop propagation so clicks inside don't close */}
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: '620px',
+          maxHeight: '92vh',
+          background: 'var(--nova-card)',
+          border: '1px solid var(--nova-border)',
+          borderRadius: '20px',
+          boxShadow: '0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,229,208,0.08)',
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '14px',
+          padding: '20px 24px 16px',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          flexShrink: 0,
+        }}>
+          <div className="nova-avatar" style={{ width: '44px', height: '44px', fontSize: '0.9rem', flexShrink: 0 }}>
+            {contact.avatarUrl
+              ? <img src={contact.avatarUrl} alt={contact.name} onError={e => { (e.target as HTMLImageElement).style.display='none'; }}/>
+              : initials}
           </div>
-          <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', marginTop: '1px' }}>
-            {contact.title || '\u2014'}{contact.companyName ? ` \u00b7 ${contact.companyName}` : ''}
-          </p>
-          {!editing && (
-            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.3)', marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '340px' }}>
-              {contact.bio
-                ? contact.bio
-                : <span style={{ fontStyle: 'italic', color: 'rgba(255,255,255,0.18)' }}>No bio \u2014 click \u270e to edit</span>}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'white', fontSize: '1rem', margin: 0 }}>
+              {contact.name}
             </p>
-          )}
-        </div>
-        {/* Social presence indicators */}
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-          {contact.linkedinUrl && <Linkedin size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-          {contact.twitterUrl  && <Twitter  size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-          {contact.githubUrl   && <Github   size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-          {contact.website     && <Globe    size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-        </div>
-        {/* Actions */}
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
-          <button
-            title={editing ? 'Cancel edit' : 'Edit bio & links'}
-            style={{
-              padding: '6px',
-              color: editing ? 'var(--nova-cyan)' : 'rgba(255,255,255,0.3)',
-              background: editing ? 'rgba(0,229,208,0.1)' : 'none',
-              border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease',
-            }}
-            onMouseEnter={e => { if (!editing) (e.currentTarget as HTMLElement).style.color = 'var(--nova-cyan)'; }}
-            onMouseLeave={e => { if (!editing) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.3)'; }}
-            onClick={() => editing ? setEditing(false) : openEdit()}
-            data-testid={`btn-edit-${contact.id}`}>
-            <Pencil size={14}/>
+            <p style={{ fontSize: '0.72rem', color: 'var(--nova-cyan)', margin: '2px 0 0', opacity: 0.8 }}>
+              Edit profile
+            </p>
+          </div>
+          <button onClick={onClose} style={{ padding: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', transition: 'all 0.15s', flexShrink: 0 }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'white'; (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.1)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.5)'; (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)'; }}>
+            <X size={16}/>
           </button>
-          <Link href={`/contact/${contact.slug}`}>
-            <button style={{ padding: '6px', color: 'rgba(255,255,255,0.4)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'white'; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.4)'; }}
-              data-testid={`btn-view-${contact.id}`}>
-              <ChevronRight size={16}/>
-            </button>
-          </Link>
-          {confirming ? (
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <button style={{ padding: '5px 10px', background: 'rgba(224,64,251,0.2)', border: '1px solid rgba(224,64,251,0.3)', borderRadius: '6px', color: 'var(--nova-pink)', fontSize: '0.75rem', cursor: 'pointer' }}
-                onClick={() => { onDelete(contact.id); setConfirming(false); }}
-                data-testid={`btn-confirm-delete-${contact.id}`}>
-                Delete
-              </button>
-              <button style={{ padding: '5px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}
-                onClick={() => setConfirming(false)}>
-                <X size={12}/>
-              </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{ overflowY: 'auto', padding: '24px', flex: 1, display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+          {/* ── Identity ── */}
+          <section>
+            <p style={{ fontSize: '0.65rem', color: 'var(--nova-cyan)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '12px', opacity: 0.7 }}>Identity</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              {field('Full name',  'name',        'Full Name')}
+              {field('Title / Role', 'title',     'e.g. Entrepreneur, Investor')}
+              {field('Company',    'companyName', 'Company name')}
+              {field('Role at co.','companyRole', 'e.g. Co-founder & CEO')}
+              <div style={{ gridColumn: '1 / -1' }}>
+                {field('Location', 'location', 'City, Country', 'input', <MapPin size={11}/>)}
+              </div>
             </div>
-          ) : (
-            <button style={{ padding: '6px', color: 'rgba(255,255,255,0.25)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--nova-pink)'; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.25)'; }}
-              onClick={() => setConfirming(true)}
-              data-testid={`btn-delete-${contact.id}`}>
-              <Trash2 size={15}/>
-            </button>
-          )}
+          </section>
+
+          {/* ── Bio ── */}
+          <section>
+            <p style={{ fontSize: '0.65rem', color: 'var(--nova-cyan)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '12px', opacity: 0.7 }}>Bio</p>
+            <textarea
+              value={form.bio}
+              onChange={e => setForm(f => ({ ...f, bio: e.target.value }))}
+              placeholder="Write a short bio — who they are and what they build..."
+              rows={4}
+              data-testid={`modal-bio-${contact.id}`}
+              style={{
+                width: '100%', background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
+                padding: '10px 12px', color: 'white', fontSize: '0.85rem',
+                lineHeight: 1.7, resize: 'vertical', fontFamily: 'var(--font-body)',
+                outline: 'none', boxSizing: 'border-box' as const, transition: 'border-color 0.15s',
+              }}
+              onFocus={e  => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.5)'; }}
+              onBlur={e   => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+            />
+          </section>
+
+          {/* ── Tags ── */}
+          <section>
+            <p style={{ fontSize: '0.65rem', color: 'var(--nova-cyan)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '12px', opacity: 0.7 }}>Tags</p>
+            <div
+              style={{
+                display: 'flex', flexWrap: 'wrap', gap: '7px', alignItems: 'center',
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px', padding: '8px 10px',
+                cursor: 'text', minHeight: '44px',
+              }}
+              onClick={() => (document.getElementById(`tag-input-${contact.id}`) as HTMLInputElement)?.focus()}
+            >
+              {tags.map(t => (
+                <span key={t} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                  background: 'rgba(32,32,200,0.35)', border: '1px solid rgba(32,32,200,0.6)',
+                  borderRadius: '20px', padding: '3px 10px 3px 12px',
+                  fontSize: '0.72rem', color: 'var(--nova-cyan)', fontWeight: 600,
+                  letterSpacing: '0.04em',
+                }}>
+                  {t}
+                  <button
+                    onClick={e => { e.stopPropagation(); removeTag(t); }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(0,229,208,0.6)', padding: '0', lineHeight: 1, fontSize: '0.9rem', display: 'flex' }}
+                    data-testid={`btn-remove-tag-${t}-${contact.id}`}
+                  >&times;</button>
+                </span>
+              ))}
+              <input
+                id={`tag-input-${contact.id}`}
+                value={tagInput}
+                onChange={e => setTagInput(e.target.value)}
+                onKeyDown={handleTagKey}
+                onBlur={() => { if (tagInput.trim()) addTag(tagInput); }}
+                placeholder={tags.length === 0 ? 'Type a tag and press Enter or comma…' : 'Add tag…'}
+                data-testid={`modal-tag-input-${contact.id}`}
+                style={{
+                  flex: '1 1 120px', minWidth: '100px',
+                  background: 'none', border: 'none', outline: 'none',
+                  color: 'white', fontSize: '0.83rem', fontFamily: 'var(--font-body)',
+                  padding: '2px 4px',
+                }}
+              />
+            </div>
+            <p style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.25)', marginTop: '6px' }}>
+              Press <kbd style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '4px', padding: '1px 5px', fontSize: '0.65rem' }}>Enter</kbd> or <kbd style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '4px', padding: '1px 5px', fontSize: '0.65rem' }}>,</kbd> to add &nbsp;·&nbsp; <kbd style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '4px', padding: '1px 5px', fontSize: '0.65rem' }}>⌫</kbd> to remove last
+            </p>
+          </section>
+
+          {/* ── Social Links ── */}
+          <section>
+            <p style={{ fontSize: '0.65rem', color: 'var(--nova-cyan)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '12px', opacity: 0.7 }}>Social &amp; Web</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              {field('LinkedIn',    'linkedinUrl', 'https://linkedin.com/in/…', 'url', <Linkedin size={11}/>)}
+              {field('Twitter / X', 'twitterUrl',  'https://x.com/…',           'url', <Twitter  size={11}/>)}
+              {field('GitHub',      'githubUrl',   'https://github.com/…',       'url', <Github   size={11}/>)}
+              {field('Website',     'website',     'https://…',                  'url', <Globe    size={11}/>)}
+            </div>
+          </section>
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          display: 'flex', gap: '10px', justifyContent: 'flex-end',
+          padding: '16px 24px',
+          borderTop: '1px solid rgba(255,255,255,0.06)',
+          flexShrink: 0,
+          background: 'rgba(8,8,24,0.4)',
+        }}>
+          <button onClick={onClose} style={{ padding: '10px 20px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', color: 'rgba(255,255,255,0.55)', fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.15s' }}>
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={saving}
+            data-testid={`modal-save-${contact.id}`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '7px',
+              padding: '10px 24px',
+              background: saving ? 'rgba(32,32,200,0.3)' : 'linear-gradient(135deg, #2020C8, #3535EE)',
+              border: '1px solid rgba(53,53,238,0.6)', borderRadius: '10px',
+              color: 'white', fontSize: '0.85rem', fontWeight: 600,
+              cursor: saving ? 'not-allowed' : 'pointer',
+              opacity: saving ? 0.7 : 1, transition: 'all 0.15s',
+              boxShadow: saving ? 'none' : '0 4px 16px rgba(32,32,200,0.4)',
+            }}
+          >
+            <Check size={15}/> {saving ? 'Saving…' : 'Save changes'}
+          </button>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Edit panel — bio + social links */}
-      {editing && (
-        <div style={{ padding: '0 16px 16px 70px', background: 'rgba(0,229,208,0.03)', borderTop: '1px solid rgba(0,229,208,0.08)' }}>
-          <p style={{ fontSize: '0.68rem', color: 'var(--nova-cyan)', margin: '12px 0 10px', letterSpacing: '0.05em', textTransform: 'uppercase', opacity: 0.8 }}>
-            Editing \u2014 {contact.name}
-          </p>
+// ── Entry Row ────────────────────────────────────────────────────────────────
+function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: number) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [showEdit, setShowEdit]     = useState(false);
 
-          {/* Bio */}
-          <div style={{ marginBottom: '14px' }}>
-            <label style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: '5px' }}>
-              Bio
-            </label>
-            <textarea
-              value={bioValue}
-              onChange={e => setBioValue(e.target.value)}
-              placeholder="2-3 sentences about who they are and what they build..."
-              rows={3}
-              data-testid={`textarea-bio-${contact.id}`}
-              style={{
-                width: '100%', background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
-                padding: '10px 12px', color: 'white', fontSize: '0.8rem',
-                lineHeight: 1.6, resize: 'vertical', fontFamily: 'var(--font-body)',
-                outline: 'none', boxSizing: 'border-box' as const, transition: 'border-color 0.15s ease',
-              }}
-              onFocus={e => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.4)'; }}
-              onBlur={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
-            />
+  const tags: string[] = (() => { try { return JSON.parse(contact.tags || '[]'); } catch { return []; } })();
+  const initials = contact.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  return (
+    <>
+      {showEdit && (
+        <EditModal
+          contact={contact}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => setShowEdit(false)}
+        />
+      )}
+
+      <div style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', transition: 'background 0.15s ease' }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(32,32,200,0.06)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}>
+
+          {/* Avatar */}
+          <div className="nova-avatar" style={{ width: '40px', height: '40px', fontSize: '0.85rem', flexShrink: 0 }}>
+            {contact.avatarUrl
+              ? <img src={contact.avatarUrl} alt={contact.name} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
+              : initials}
           </div>
 
-          {/* Social links — 2-column grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
-            <LinkField label="LinkedIn" icon={<Linkedin size={11}/>} field="linkedinUrl" placeholder="https://linkedin.com/in/handle" />
-            <LinkField label="Twitter / X" icon={<Twitter size={11}/>} field="twitterUrl" placeholder="https://x.com/handle" />
-            <LinkField label="GitHub" icon={<Github size={11}/>} field="githubUrl" placeholder="https://github.com/handle" />
-            <LinkField label="Website" icon={<Globe size={11}/>} field="website" placeholder="https://example.com" />
+          {/* Info */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'white', fontSize: '0.9rem' }}>
+                {contact.name}
+              </span>
+              {tags.slice(0, 3).map(t => (
+                <span key={t} className="nova-tag" style={{ fontSize: '0.6rem' }}>{t}</span>
+              ))}
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', marginTop: '1px' }}>
+              {contact.title || '\u2014'}{contact.companyName ? ` \u00b7 ${contact.companyName}` : ''}
+            </p>
+            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.28)', marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '340px' }}>
+              {contact.bio
+                ? contact.bio
+                : <span style={{ fontStyle: 'italic', color: 'rgba(255,255,255,0.16)' }}>No bio yet</span>}
+            </p>
           </div>
 
-          {/* Save / Cancel */}
-          <div style={{ display: 'flex', gap: '8px' }}>
+          {/* Social indicators */}
+          <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexShrink: 0 }}>
+            {contact.linkedinUrl && <Linkedin size={12} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+            {contact.twitterUrl  && <Twitter  size={12} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+            {contact.githubUrl   && <Github   size={12} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+            {contact.website     && <Globe    size={12} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+            {/* Edit */}
             <button
-              onClick={saveAll}
-              disabled={saving}
-              data-testid={`btn-save-${contact.id}`}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '5px',
-                padding: '7px 16px',
-                background: 'linear-gradient(135deg, rgba(0,229,208,0.2), rgba(32,32,200,0.2))',
-                border: '1px solid rgba(0,229,208,0.35)', borderRadius: '7px',
-                color: 'var(--nova-cyan)', fontSize: '0.75rem', fontWeight: 600,
-                cursor: saving ? 'not-allowed' : 'pointer',
-                opacity: saving ? 0.6 : 1, transition: 'all 0.15s ease',
-              }}
-            >
-              <Check size={13}/> {saving ? 'Saving...' : 'Save'}
+              title="Edit profile"
+              onClick={() => setShowEdit(true)}
+              data-testid={`btn-edit-${contact.id}`}
+              style={{ padding: '6px', color: 'rgba(255,255,255,0.35)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--nova-cyan)'; (e.currentTarget as HTMLElement).style.background = 'rgba(0,229,208,0.08)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.35)'; (e.currentTarget as HTMLElement).style.background = 'none'; }}>
+              <Pencil size={14}/>
             </button>
-            <button
-              onClick={() => setEditing(false)}
-              style={{
-                padding: '7px 12px', background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)', borderRadius: '7px',
-                color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
+            {/* View */}
+            <Link href={`/contact/${contact.slug}`}>
+              <button
+                data-testid={`btn-view-${contact.id}`}
+                style={{ padding: '6px', color: 'rgba(255,255,255,0.35)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'white'; (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.35)'; (e.currentTarget as HTMLElement).style.background = 'none'; }}>
+                <ChevronRight size={16}/>
+              </button>
+            </Link>
+            {/* Delete */}
+            {confirming ? (
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  style={{ padding: '5px 10px', background: 'rgba(224,64,251,0.15)', border: '1px solid rgba(224,64,251,0.3)', borderRadius: '6px', color: 'var(--nova-pink)', fontSize: '0.75rem', cursor: 'pointer' }}
+                  onClick={() => { onDelete(contact.id); setConfirming(false); }}
+                  data-testid={`btn-confirm-delete-${contact.id}`}>
+                  Delete
+                </button>
+                <button style={{ padding: '5px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', color: 'rgba(255,255,255,0.4)', cursor: 'pointer' }}
+                  onClick={() => setConfirming(false)}>
+                  <X size={12}/>
+                </button>
+              </div>
+            ) : (
+              <button
+                data-testid={`btn-delete-${contact.id}`}
+                style={{ padding: '6px', color: 'rgba(255,255,255,0.22)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--nova-pink)'; (e.currentTarget as HTMLElement).style.background = 'rgba(224,64,251,0.08)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.22)'; (e.currentTarget as HTMLElement).style.background = 'none'; }}
+                onClick={() => setConfirming(true)}>
+                <Trash2 size={15}/>
+              </button>
+            )}
           </div>
         </div>
-      )}
-    </div>
+      </div>
+    </>
   );
 }
 // ── Main Admin Page ─────────────────────────────────────────────────────────
