@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin, Building2, ExternalLink, Instagram, Verified } from "lucide-react";
+import { ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin, Building2, ExternalLink, Verified } from "lucide-react";
 import type { Contact } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
 
 function NovaNextLogo({ size = 32 }: { size?: number }) {
   return (
@@ -18,7 +19,7 @@ export default function ContactPage() {
   const { data: contact, isLoading, isError } = useQuery<Contact>({
     queryKey: ["/api/contacts", slug],
     queryFn: async () => {
-      const res = await fetch(`/api/contacts/${slug}`);
+      const res = await apiRequest("GET", `/api/contacts/${slug}`);
       if (!res.ok) throw new Error("Not found");
       return res.json();
     },

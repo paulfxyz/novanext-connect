@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
 import { getAdminAuth, setAdminAuth } from "@/lib/adminAuth";
+import AdminImport from "./admin-import";
 import {
-  Search, Plus, Trash2, Edit3, X, Check, Users, Building2,
-  ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin,
-  Zap, AlertCircle, ChevronRight, Star, RefreshCw, LogOut
+  Search, Plus, Trash2, X, Users, Building2,
+  ArrowLeft, Linkedin, Twitter, Github,
+  Zap, ChevronRight, RefreshCw, LogOut, Upload
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -178,7 +179,7 @@ function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: numb
 // ── Main Admin Page ─────────────────────────────────────────────────────────
 export default function AdminPage() {
   const [, navigate] = useLocation();
-  const [view, setView] = useState<"research" | "entries">("research");
+  const [view, setView] = useState<"research" | "entries" | "import">("research");
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
   const [addingName, setAddingName] = useState<string | null>(null);
@@ -222,7 +223,7 @@ export default function AdminPage() {
     mutationFn: (suggestion: ContactSuggestion) =>
       apiRequest("POST", "/api/admin/contacts", {
         name: suggestion.name,
-        slug: suggestion.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+        slug: suggestion.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
         title: suggestion.title || null,
         bio: suggestion.bio || null,
         avatarUrl: suggestion.avatarUrl || null,
@@ -304,14 +305,15 @@ export default function AdminPage() {
           {/* Tabs row */}
           <div style={{ display: 'flex', gap: '2px', background: 'rgba(255,255,255,0.05)', borderRadius: '10px', padding: '3px' }}>
             {[
-              { id: 'research', label: 'Research', icon: <Zap size={13}/> },
-              { id: 'entries', label: `Entries (${contacts.length})`, icon: <Users size={13}/> }
+              { id: 'research', label: 'Research', icon: <Zap size={12}/> },
+              { id: 'import', label: 'Import', icon: <Upload size={12}/> },
+              { id: 'entries', label: `Entries (${contacts.length})`, icon: <Users size={12}/> }
             ].map(tab => (
               <button key={tab.id}
                 style={{
-                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                  padding: '8px 12px', borderRadius: '7px', border: 'none', cursor: 'pointer',
-                  fontSize: '0.82rem', fontWeight: 600,
+                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                  padding: '8px 8px', borderRadius: '7px', border: 'none', cursor: 'pointer',
+                  fontSize: '0.78rem', fontWeight: 600,
                   background: view === tab.id ? 'var(--nova-blue)' : 'transparent',
                   color: view === tab.id ? 'white' : 'rgba(255,255,255,0.45)',
                   transition: 'all 0.15s ease'
@@ -413,6 +415,11 @@ export default function AdminPage() {
           </div>
         )}
 
+        {/* ── IMPORT TAB ────────────────────────────────────────────────────── */}
+        {view === "import" && (
+          <AdminImport onDone={() => setView("entries")}/>
+        )}
+
         {/* ── ENTRIES TAB ───────────────────────────────────────────────────── */}
         {view === "entries" && (
           <div>
@@ -425,10 +432,16 @@ export default function AdminPage() {
                   {contacts.length} {contacts.length === 1 ? 'person' : 'people'} in the directory
                 </p>
               </div>
-              <button className="nova-btn-primary" style={{ fontSize: '0.8rem', borderRadius: '10px' }}
-                onClick={() => setView("research")}>
-                <Plus size={14}/> Add More
-              </button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="nova-btn-primary" style={{ fontSize: '0.78rem', borderRadius: '10px', padding: '8px 14px' }}
+                  onClick={() => setView("research")}>
+                  <Zap size={13}/> Research
+                </button>
+                <button style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', borderRadius: '10px', padding: '8px 14px', background: 'rgba(0,229,208,0.1)', border: '1px solid rgba(0,229,208,0.25)', color: 'var(--nova-cyan)', cursor: 'pointer', fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.04em' }}
+                  onClick={() => setView("import")}>
+                  <Upload size={13}/> Import
+                </button>
+              </div>
             </div>
 
             {/* Filter */}
