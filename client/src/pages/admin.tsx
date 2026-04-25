@@ -8,7 +8,7 @@ import {
   Search, Plus, Trash2, X, Users, Building2,
   ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin,
   Zap, ChevronRight, RefreshCw, LogOut, Upload, ExternalLink, ShieldCheck,
-  Pencil, Check
+  Pencil, Check, Sparkles
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -535,6 +535,19 @@ function EditModal({ contact, onClose, onSaved }: {
 function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: number) => void }) {
   const [confirming, setConfirming] = useState(false);
   const [showEdit, setShowEdit]     = useState(false);
+  const { toast } = useToast();
+
+  const enrichMutation = useMutation({
+    mutationFn: () => apiRequest('POST', `/api/admin/contacts/${contact.id}/enrich`),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/contacts'] });
+      const fields = data?.enriched || [];
+      toast({ title: 'Profile refreshed', description: fields.length > 0 ? `Updated: ${fields.join(', ')}` : 'Bio and tags updated.' });
+    },
+    onError: (e: any) => {
+      toast({ title: 'Enrichment failed', description: e?.message || 'Could not reach research engine.', variant: 'destructive' });
+    },
+  });
 
   const tags: string[] = (() => { try { return JSON.parse(contact.tags || '[]'); } catch { return []; } })();
   const initials = contact.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -591,6 +604,17 @@ function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: numb
 
           {/* Actions */}
           <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+            {/* AI Enrich */}
+            <button
+              title="Re-enrich with AI"
+              onClick={() => enrichMutation.mutate()}
+              disabled={enrichMutation.isPending}
+              data-testid={`btn-enrich-${contact.id}`}
+              style={{ padding: '6px', color: enrichMutation.isPending ? 'var(--nova-cyan)' : 'rgba(255,255,255,0.35)', background: enrichMutation.isPending ? 'rgba(0,229,208,0.1)' : 'none', border: 'none', cursor: enrichMutation.isPending ? 'wait' : 'pointer', borderRadius: '6px', transition: 'all 0.15s' }}
+              onMouseEnter={e => { if (!enrichMutation.isPending) { (e.currentTarget as HTMLElement).style.color = 'var(--nova-cyan)'; (e.currentTarget as HTMLElement).style.background = 'rgba(0,229,208,0.08)'; } }}
+              onMouseLeave={e => { if (!enrichMutation.isPending) { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.35)'; (e.currentTarget as HTMLElement).style.background = 'none'; } }}>
+              <Sparkles size={14} style={{ animation: enrichMutation.isPending ? 'spin 1s linear infinite' : 'none' }}/>
+            </button>
             {/* Edit */}
             <button
               title="Edit profile"

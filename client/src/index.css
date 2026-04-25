@@ -393,3 +393,13 @@
   .nova-card { border-radius: 12px; }
   .nova-avatar { width: 56px; height: 56px; font-size: 1.2rem; }
 }
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}

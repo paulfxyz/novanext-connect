@@ -395,15 +395,13 @@ Return EXACTLY 4 items as a raw JSON array (no markdown, no wrapper):
 // ── Bio synthesis via AI ────────────────────────────────────────────────────
 // Takes a structured fact object and writes a clean, professional 2-3 sentence bio.
 // This is the ONLY place where AI writes bio text — strictly grounded in the provided facts.
-async function synthesizeBio(facts: Record<string, string>, name: string): Promise<string | null> {
-  // Build a compact fact sheet to hand to the model
+function buildFactLines(facts: Record<string, string>): string[] {
   const factLines: string[] = [];
   if (facts['bio_hint'])   factLines.push(`GitHub/profile bio: "${facts['bio_hint']}"`);
   if (facts['company'])    factLines.push(`Company/org: ${facts['company']}`);
   if (facts['location'])   factLines.push(`Location: ${facts['location']}`);
   if (facts['website'])    factLines.push(`Website: ${facts['website']}`);
   if (facts['top_repos']) {
-    // Parse repo entries into clean project descriptions
     const repos = facts['top_repos'].split('; ').slice(0, 4).map(r => {
       const colon = r.indexOf(':');
       if (colon === -1) return r.trim();
@@ -414,37 +412,53 @@ async function synthesizeBio(facts: Record<string, string>, name: string): Promi
     if (repos.length) factLines.push(`Open source projects: ${repos.join(' | ')}`);
   }
   if (facts['site_text']) {
-    // Only include site_text if it looks like real prose (not nav junk)
     const prose = facts['site_text'].replace(/[|>\u2192\u2713\u2715\u00d7\u2022]/g, ' ').replace(/\s{2,}/g, ' ').trim();
     if (prose.length > 60) factLines.push(`Website content excerpt: ${prose.slice(0, 400)}`);
   }
+  return factLines;
+}
 
-  if (factLines.length === 0) return null;
+async function synthesizeBioAndTags(facts: Record<string, string>, name: string): Promise<{ bio: string | null; tags: string[] }> {
+  const factLines = buildFactLines(facts);
+  if (factLines.length === 0) return { bio: null, tags: [] };
 
-  const prompt = `You are writing a professional bio for a networking app directory at NovaNEXT 2026, a major AI and startup conference in Aveiro, Portugal.
+  const prompt = `You are writing a professional profile for a networking app directory at NovaNEXT 2026, a major AI and startup conference in Aveiro, Portugal.
 
 Person: ${name}
 
 VERIFIED FACTS (scraped from their actual profiles — use only these):
 ${factLines.join('\n')}
 
-Write a crisp, professional 2-3 sentence bio for their directory card.
-Rules:
-- Use ONLY the facts above. Do NOT add anything not present in the facts.
-- Do NOT mention NovaNEXT or the conference.
-- Do NOT invent a job title, company, funding, or achievement unless explicitly in the facts.
-- Write in third person ("He builds...", "She is...", "They create...") — pick the most neutral if gender unknown.
-- First sentence: who they are (role/identity from bio_hint or company). Second/third: what they build or do, based on projects/site content.
-- Keep it under 80 words. No em-dashes as punctuation. No marketing fluff.
-- Return ONLY the bio text — no quotes, no label, no JSON.`;
+Return a JSON object with two fields:
+1. "bio": a crisp, professional 2-3 sentence bio.
+   - Use ONLY the facts above. Do NOT add anything not present in the facts.
+   - Do NOT mention NovaNEXT or the conference.
+   - Do NOT invent a job title, company, funding, or achievement unless explicitly in the facts.
+   - Write in third person ("He builds...", "She leads...", "They create...").
+   - Keep it under 80 words. No em-dashes. No marketing fluff.
+2. "tags": an array of 2-5 short professional tags (e.g. "Founder", "AI", "VC", "Developer", "Design", "Investor", "Product", "Open Source", "SaaS", "Hardware", "Web3", "Climate", "Healthcare", "B2B", "Angel", etc.).
+   - Derive ONLY from the facts. Do not guess.
+   - Tags should be title-cased single words or short 2-word phrases.
+
+Return ONLY valid JSON like: {"bio": "...", "tags": ["Founder", "AI"]}`;
 
   try {
     const result = await callOpenRouter('anthropic/claude-3.5-haiku', prompt);
-    const bio = result.trim().replace(/^["']|["']$/g, '').trim();
-    return bio.length > 20 ? bio : null;
+    const jsonMatch = result.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON in response');
+    const parsed = JSON.parse(jsonMatch[0]);
+    const bio = typeof parsed.bio === 'string' && parsed.bio.length > 20 ? parsed.bio.trim() : null;
+    const tags = Array.isArray(parsed.tags) ? parsed.tags.map((t: any) => String(t).trim()).filter(Boolean).slice(0, 6) : [];
+    return { bio, tags };
   } catch {
-    return null;
+    return { bio: null, tags: [] };
   }
+}
+
+// Backwards-compat wrapper
+async function synthesizeBio(facts: Record<string, string>, name: string): Promise<string | null> {
+  const { bio } = await synthesizeBioAndTags(facts, name);
+  return bio;
 }
 
 // Build a suggestion object directly from enriched facts.
@@ -475,21 +489,9 @@ async function buildAnchorFromFacts(profile: EnrichedProfile, query: string): Pr
     }
   }
 
-  // Synthesize bio via AI — grounded in facts only
-  const bio = await synthesizeBio(f, name);
-
-  // Derive tags from what we know
-  const tags: string[] = [];
-  const allText = [f['bio_hint'] || '', f['top_repos'] || '', f['site_text'] || ''].join(' ').toLowerCase();
-  if (allText.includes('entrepreneur')) tags.push('Entrepreneur');
-  if (allText.includes('founder')) tags.push('Founder');
-  if (allText.includes('investor')) tags.push('Investor');
-  if (allText.includes('rust') || allText.includes('tauri')) tags.push('Rust');
-  if (allText.includes(' ai ') || allText.includes('artificial intelligence') || allText.includes('machine learning') || allText.includes('llm')) tags.push('AI');
-  if (allText.includes('open source') || profile.platform === 'github') tags.push('Open Source');
-  if (allText.includes('design') || allText.includes('ux') || allText.includes('product')) tags.push('Product');
-  if (allText.includes('invest') || allText.includes('venture') || allText.includes('vc ') || allText.includes('fund')) tags.push('VC');
-  if (tags.length === 0) tags.push('Tech');
+  // Synthesize bio + tags via AI — grounded in facts only
+  const { bio, tags: aiTags } = await synthesizeBioAndTags(f, name);
+  const tags = aiTags.length > 0 ? aiTags : ['Tech'];
 
   // Title: use the short GitHub bio as a title-line — it's typically a role/identity
   // NOT as the bio body (previously that doubled-up ugly)
@@ -699,6 +701,56 @@ export function registerRoutes(httpServer: Server, app: Express): void {
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // AI re-enrich an existing contact: re-runs the full research pipeline and merges results
+  app.post("/api/admin/contacts/:id/enrich", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
+    const contact = storage.getContact(id);
+    if (!contact) return res.status(404).json({ error: 'Not found' });
+
+    try {
+      // Build a query from what we know: prefer profile URLs, fall back to name
+      const urls: string[] = [
+        contact.linkedinUrl,
+        contact.githubUrl,
+        contact.twitterUrl,
+        contact.website,
+      ].filter((u): u is string => !!u && u.startsWith('http'));
+
+      const query = contact.name;
+      const suggestions = await searchPersonOrCompany(query, urls);
+      if (!suggestions || suggestions.length === 0) {
+        return res.status(422).json({ error: 'No research results found' });
+      }
+
+      // Take the top suggestion (highest confidence / verified anchor)
+      const top = suggestions[0];
+
+      // Smart merge: always overwrite bio + tags; fill blanks for everything else
+      const patch: Record<string, any> = {};
+
+      // Always refresh bio and tags
+      if (top.bio)  patch.bio  = top.bio;
+      if (top.tags && top.tags.length > 0) patch.tags = JSON.stringify(top.tags);
+
+      // Fill blanks (never overwrite user-edited values)
+      if (!contact.title        && top.title)       patch.title       = top.title;
+      if (!contact.location     && top.location)    patch.location    = top.location;
+      if (!contact.companyName  && top.companyName) patch.companyName = top.companyName;
+      if (!contact.companyRole  && top.companyRole) patch.companyRole = top.companyRole;
+      if (!contact.linkedinUrl  && top.linkedinUrl) patch.linkedinUrl = top.linkedinUrl;
+      if (!contact.githubUrl    && top.githubUrl)   patch.githubUrl   = top.githubUrl;
+      if (!contact.twitterUrl   && top.twitterUrl)  patch.twitterUrl  = top.twitterUrl;
+      if (!contact.website      && top.website)     patch.website     = top.website;
+
+      const updated = storage.updateContact(id, patch);
+      res.json({ contact: updated, enriched: Object.keys(patch) });
+    } catch (e: any) {
+      console.error('Enrich error:', e);
+      res.status(500).json({ error: 'Enrichment failed: ' + e.message });
     }
   });
 
