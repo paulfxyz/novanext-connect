@@ -103,3 +103,15 @@ The admin nav with logo + two tabs + two action buttons was too cramped on 390px
 - Event schedule integration (sessions + speakers)
 - QR code per contact card for quick sharing
 - Offline PWA support
+
+## [1.1.1] — 2026-04-25
+
+### 🐛 Bug Fixes
+
+- **Research crash (blank page)** — The admin research feature was causing a silent React tree crash after ~15 seconds, leaving the page completely blank. Three root causes fixed:
+  1. **No error boundary** — any render exception killed the whole UI. A global `ErrorBoundary` now wraps all routes and shows a branded recovery screen instead.
+  2. **Unguarded data from AI models** — AI responses occasionally return `tags` as a comma-string, `name` as null, or `confidence` outside 0–1. A new `sanitizeSuggestion()` server-side function normalises every field before it leaves the API.
+  3. **`SuggestionCard` not defensive** — the component now coerces all fields to safe types before rendering, guarding against any unexpected shapes.
+- **OpenRouter timeout** — API calls had no timeout, causing the pplx.app sandbox to hang indefinitely on slow or unresponsive models. Each call now has a hard 20-second `AbortController` timeout.
+- **Missing Lucide imports** — `Globe` and `MapPin` were used in `SuggestionCard` but not imported, causing a module error in some builds.
+- **JSON parsing robustness** — model responses wrapped in `{ suggestions: [...] }` and responses with stray markdown fences are now handled correctly.
