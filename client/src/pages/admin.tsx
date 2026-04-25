@@ -5,7 +5,7 @@ import { getAdminAuth, setAdminAuth } from "@/lib/adminAuth";
 import AdminImport from "./admin-import";
 import {
   Search, Plus, Trash2, X, Users, Building2,
-  ArrowLeft, Linkedin, Twitter, Github,
+  ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin,
   Zap, ChevronRight, RefreshCw, LogOut, Upload
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -25,8 +25,17 @@ function NovaNextLogo({ size = 32 }: { size?: number }) {
 function SuggestionCard({
   suggestion, onAdd, isAdding
 }: { suggestion: ContactSuggestion; onAdd: (s: ContactSuggestion) => void; isAdding: boolean }) {
-  const confidence = Math.round((suggestion.confidence || 0.5) * 100);
-  const initials = suggestion.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  // Defensive: ensure name is always a string
+  const name = suggestion?.name ? String(suggestion.name) : 'Unknown';
+  const confidence = Math.round(Math.min(1, Math.max(0, Number(suggestion?.confidence) || 0.5)) * 100);
+  const initials = name.split(" ").filter(Boolean).map(w => w[0]).join("").slice(0, 2).toUpperCase() || '?';
+  // Defensive: tags must be an array of strings
+  const tags: string[] = Array.isArray(suggestion?.tags)
+    ? suggestion.tags.map(String)
+    : typeof suggestion?.tags === 'string'
+      ? (suggestion.tags as string).split(',').map(t => t.trim()).filter(Boolean)
+      : [];
+  const safeName = name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
 
   return (
     <div className="nova-card suggestion-card" style={{ padding: '20px', position: 'relative' }}>
@@ -40,54 +49,52 @@ function SuggestionCard({
 
       <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start', marginBottom: '12px' }}>
         <div className="nova-avatar" style={{ width: '52px', height: '52px', fontSize: '1.1rem', flexShrink: 0 }}>
-          {suggestion.avatarUrl
-            ? <img src={suggestion.avatarUrl} alt={suggestion.name} onError={(e) => { (e.target as HTMLImageElement).style.display='none'; }}/>
-            : initials}
+          {initials}
         </div>
         <div style={{ flex: 1, minWidth: 0, paddingRight: '70px' }}>
           <h3 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', color: 'white', marginBottom: '2px' }}>
-            {suggestion.name}
+            {name}
           </h3>
-          {suggestion.title && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--nova-cyan)', fontWeight: 600 }}>{suggestion.title}</p>
+          {suggestion?.title && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--nova-cyan)', fontWeight: 600 }}>{String(suggestion.title)}</p>
           )}
-          {suggestion.companyName && (
+          {suggestion?.companyName && (
             <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Building2 size={10}/> {suggestion.companyName}
+              <Building2 size={10}/> {String(suggestion.companyName)}
             </p>
           )}
         </div>
       </div>
 
-      {suggestion.bio && (
+      {suggestion?.bio && (
         <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.6, marginBottom: '10px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-          {suggestion.bio}
+          {String(suggestion.bio)}
         </p>
       )}
 
       {/* Reason badge */}
-      {suggestion.reason && (
+      {suggestion?.reason && (
         <div style={{ background: 'rgba(0,229,208,0.06)', border: '1px solid rgba(0,229,208,0.15)', borderRadius: '8px', padding: '8px 10px', marginBottom: '12px' }}>
           <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
             <span style={{ color: 'var(--nova-cyan)', fontWeight: 600 }}>Why here: </span>
-            {suggestion.reason}
+            {String(suggestion.reason)}
           </p>
         </div>
       )}
 
       {/* Social badges */}
       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
-        {suggestion.linkedinUrl && <span className="nova-badge"><Linkedin size={9}/> LinkedIn</span>}
-        {suggestion.twitterUrl && <span className="nova-badge"><Twitter size={9}/> X</span>}
-        {suggestion.githubUrl && <span className="nova-badge"><Github size={9}/> GitHub</span>}
-        {suggestion.website && <span className="nova-badge"><Globe size={9}/> Web</span>}
-        {suggestion.location && <span className="nova-badge"><MapPin size={9}/> {suggestion.location}</span>}
+        {suggestion?.linkedinUrl && <span className="nova-badge"><Linkedin size={9}/> LinkedIn</span>}
+        {suggestion?.twitterUrl && <span className="nova-badge"><Twitter size={9}/> X</span>}
+        {suggestion?.githubUrl && <span className="nova-badge"><Github size={9}/> GitHub</span>}
+        {suggestion?.website && <span className="nova-badge"><Globe size={9}/> Web</span>}
+        {suggestion?.location && <span className="nova-badge"><MapPin size={9}/> {String(suggestion.location)}</span>}
       </div>
 
       {/* Tags */}
-      {suggestion.tags && suggestion.tags.length > 0 && (
+      {tags.length > 0 && (
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
-          {suggestion.tags.slice(0, 4).map(t => <span key={t} className="nova-tag">{t}</span>)}
+          {tags.slice(0, 4).map((t, i) => <span key={`${t}-${i}`} className="nova-tag">{t}</span>)}
         </div>
       )}
 
@@ -97,7 +104,7 @@ function SuggestionCard({
         style={{ width: '100%', justifyContent: 'center', fontSize: '0.8rem', padding: '10px' }}
         onClick={() => onAdd(suggestion)}
         disabled={isAdding}
-        data-testid={`btn-add-suggestion-${suggestion.name.replace(/\s/g, '-').toLowerCase()}`}
+        data-testid={`btn-add-suggestion-${safeName}`}
       >
         {isAdding ? <RefreshCw size={14} className="animate-spin"/> : <Plus size={14}/>}
         {isAdding ? 'Adding...' : 'Add to Directory'}

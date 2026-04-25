@@ -6,28 +6,74 @@ import { z } from "zod";
 
 const OPENROUTER_API_KEY = "REDACTED_KEY_REMOVED";
 
-// Helper: call OpenRouter with a model
+// Helper: call OpenRouter with a model — 20 s hard timeout so pplx.app sandbox never hangs
 async function callOpenRouter(model: string, prompt: string): Promise<string> {
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://nova.paulfleury.com",
-      "X-Title": "NovaNEXT Networking App"
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
-      max_tokens: 2000,
-    })
-  });
-  if (!response.ok) {
-    throw new Error(`OpenRouter error: ${response.status}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://nova.paulfleury.com",
+        "X-Title": "NovaNEXT Networking App"
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
+        max_tokens: 1500,
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`OpenRouter error: ${response.status}`);
+    }
+    const data = await response.json() as { choices: Array<{ message: { content: string } }> };
+    return data.choices[0]?.message?.content || "";
+  } finally {
+    clearTimeout(timer);
   }
-  const data = await response.json() as { choices: Array<{ message: { content: string } }> };
-  return data.choices[0]?.message?.content || "";
+}
+
+// Sanitize a raw AI suggestion into a safe shape before sending to client
+function sanitizeSuggestion(raw: any): any | null {
+  try {
+    const name = (raw?.name ?? '').toString().trim();
+    if (!name) return null; // skip nameless entries
+
+    // tags: AI sometimes returns a comma-string or object — normalize to string[]
+    let tags: string[] = [];
+    if (Array.isArray(raw.tags)) {
+      tags = raw.tags.map((t: any) => String(t).trim()).filter(Boolean);
+    } else if (typeof raw.tags === 'string') {
+      tags = raw.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+    }
+
+    // confidence: clamp to 0-1
+    const confidence = Math.min(1, Math.max(0, parseFloat(raw.confidence ?? 0.5) || 0.5));
+
+    return {
+      name,
+      title:       raw.title       ? String(raw.title).trim()       : undefined,
+      bio:         raw.bio         ? String(raw.bio).trim()          : undefined,
+      avatarUrl:   null, // never trust AI-supplied avatar URLs (they 404)
+      location:    raw.location    ? String(raw.location).trim()     : undefined,
+      companyName: raw.companyName ? String(raw.companyName).trim()  : undefined,
+      companyRole: raw.companyRole ? String(raw.companyRole).trim()  : undefined,
+      website:     raw.website     ? String(raw.website).trim()      : undefined,
+      linkedinUrl: raw.linkedinUrl ? String(raw.linkedinUrl).trim()  : undefined,
+      twitterUrl:  raw.twitterUrl  ? String(raw.twitterUrl).trim()   : undefined,
+      githubUrl:   raw.githubUrl   ? String(raw.githubUrl).trim()    : undefined,
+      tags,
+      confidence,
+      source:  raw.source  ? String(raw.source)  : 'knowledge base',
+      reason:  raw.reason  ? String(raw.reason)  : '',
+    };
+  } catch {
+    return null;
+  }
 }
 
 // Search for a person/company using multiple AI models and merge results
@@ -82,19 +128,25 @@ Return ONLY valid JSON array, no markdown, no explanation. If unsure about a URL
       try {
         let content = result.value.trim();
         // Strip markdown code blocks if present
-        content = content.replace(/^```(?:json)?\n?/m, '').replace(/```\s*$/m, '').trim();
-        const parsed = JSON.parse(content);
+        content = content.replace(/^```(?:json)?[\r\n]*/m, '').replace(/```[\s]*$/m, '').trim();
+        // Some models wrap in an object: { suggestions: [...] }
+        let parsed = JSON.parse(content);
+        if (!Array.isArray(parsed) && Array.isArray(parsed?.suggestions)) {
+          parsed = parsed.suggestions;
+        }
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
-            const key = item.name?.toLowerCase()?.trim();
-            if (key && !seen.has(key)) {
+            const sanitized = sanitizeSuggestion(item);
+            if (!sanitized) continue;
+            const key = sanitized.name.toLowerCase();
+            if (!seen.has(key)) {
               seen.add(key);
-              allSuggestions.push(item);
+              allSuggestions.push(sanitized);
             }
           }
         }
       } catch (e) {
-        console.error("Parse error:", e);
+        console.error("Parse error from model:", e);
       }
     }
   }
