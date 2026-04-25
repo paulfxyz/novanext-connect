@@ -5,6 +5,33 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.2.0] — 2026-04-25
+
+### ✨ New Features
+
+#### Research Engine — 10 Results & URL Grounding
+- **URL/LinkedIn input field** in Admin Research — paste any profile or website URL alongside the name query; the server fetches and strips HTML from the URL (10s timeout) and feeds it as grounding context to the AI prompt
+- **Auto-detect inline URLs** — URLs typed directly into the name query field are also extracted and scraped automatically
+- **10 results per search** — 3 AI models queried in parallel (Claude 3.5 Haiku, Gemini Flash 1.5, GPT-4o Mini), each returning 4 suggestions → deduplicated → sorted by confidence → top 10 returned
+- **Confidence scoring improved** — first result automatically boosted to ≥ 0.9 when page context was scraped, ensuring the exact person/company from the URL ranks first
+- **Research API** — `POST /api/admin/research` now accepts optional `url` field and passes it to `searchPersonOrCompany(query, extraUrls[])`
+
+#### Richer Suggestion Cards (Admin)
+- **Full bio display** — no longer clamped to 2 lines; shows complete bio with "Show more / Show less" toggle for bios longer than ~220 characters
+- **Clickable social links** — LinkedIn, X/Twitter, GitHub, Website badges are now real `<a href target="_blank">` links (previously non-interactive)
+- **Company + role as distinct labelled fields** — company name with building icon, role as secondary label beneath
+- **Location** moved into the header section alongside the name/title
+- **Confidence colour-coded** — green (≥80%), cyan (≥60%), yellow (≥40%), dim otherwise
+- **All tags shown** — up to 5 tags (was 4)
+
+#### Home Page — "Research with AI" Button
+- **Empty state CTA** — when a search query returns 0 local results, a prominent blue gradient button appears: "Research \"[query]\" with AI →"
+- **Results state CTA** — a subtle secondary button appears below the card grid when results exist but the user may want to find someone not yet in the directory
+- Both buttons navigate to `/#/admin?q=<encoded query>` — the Admin page reads the `?q=` hash param on mount, pre-fills the search field, and auto-triggers research
+- **No sessionStorage** — all state passed via URL hash param, compatible with iframe sandbox
+
+---
+
 ## [1.1.0] — 2026-04-25
 
 ### 🐛 Bug Fixes
