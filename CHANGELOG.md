@@ -5,6 +5,29 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.1.0] — 2026-04-25
+
+### 🐛 Bug Fixes
+
+- **Slug normalization** — `slugify()` now applies NFD Unicode decomposition before stripping diacritics. `António Câmara` correctly becomes `antonio-camara` (was `ant-nio-c-mara`). A startup migration auto-heals any existing broken slugs in the database.
+- **Contact page proxy** — Replaced raw `fetch()` with `apiRequest()` in `contact.tsx` so the `__PORT_5000__` rewrite fires correctly on `nova.pplx.app`. Direct links like `/#/contact/paul-fleury` no longer 404.
+
+### ✨ New Features
+
+#### Import Tab (Admin)
+- **File drop zone** — drag & drop or click-to-browse for CSV, vCard (`.vcf`), and plain text files
+- **Auto-detection** — heuristic column mapper detects name, title, company, LinkedIn, Twitter, GitHub, location, tags from common export formats
+- **Column mapping UI** — dropdown selects per column with example value preview; Name is required before proceeding
+- **Paste mode** — names one-per-line OR raw CSV text with toggle, routes through same mapping/preview pipeline
+- **vCard parser** — extracts `FN`, `TITLE`, `ORG`, `NOTE`, `ADR`, and typed `URL` fields from `.vcf` exports
+- **Preview table** — first 8 rows shown before import, expandable; rows without a name are excluded automatically
+- **Bulk import endpoint** — `POST /api/admin/import` accepts array of contact objects, returns per-row `added`/`error` status
+- **Result view** — success/failure per contact with toast summary; "Import More" and "View Entries" CTAs
+- **Sample CSV download** — one-click template with correct column names
+- **Supported sources listed:** LinkedIn CSV, HubSpot, Salesforce, Notion Database, Airtable, Google Contacts, Apple Contacts (`.vcf`), any spreadsheet
+
+---
+
 ## [1.0.0] — 2026-04-25
 
 ### 🎉 Initial Release — Built live at NovaNEXT showcase
