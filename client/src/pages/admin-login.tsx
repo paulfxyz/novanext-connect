@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Shield, ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
+import { setAdminAuth } from "@/lib/adminAuth";
 
 const CORRECT_PIN = "0000";
 
@@ -45,8 +46,7 @@ export default function AdminLoginPage() {
     if (index === 3 && digit) {
       const fullPin = [...newPin].join("");
       if (fullPin === CORRECT_PIN) {
-        // Store auth in sessionStorage (simpler — no hash routing conflict)
-        sessionStorage.setItem("nova_admin_auth", "true");
+        setAdminAuth(true);
         navigate("/admin");
       } else {
         setError(true);

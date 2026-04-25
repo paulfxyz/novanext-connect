@@ -24,29 +24,32 @@ function ContactCard({ contact }: { contact: Contact }) {
 
   return (
     <Link href={`/contact/${contact.slug}`}>
-      <div className="nova-card p-5 cursor-pointer h-full" data-testid={`card-contact-${contact.id}`}>
-        <div className="flex items-start gap-4 mb-4">
-          <div className="nova-avatar">
+      <div className="nova-card p-4 cursor-pointer" data-testid={`card-contact-${contact.id}`}>
+        <div className="flex items-start gap-3 mb-3">
+          <div className="nova-avatar" style={{ width: '52px', height: '52px', fontSize: '1.1rem', flexShrink: 0 }}>
             {contact.avatarUrl
               ? <img src={contact.avatarUrl} alt={contact.name} onError={(e) => { (e.target as HTMLImageElement).style.display='none'; }}/>
               : initials}
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="font-bold text-white text-lg leading-tight truncate" style={{ fontFamily: 'var(--font-display)' }}>
-              {contact.name}
-            </h3>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '4px' }}>
+              <h3 className="font-bold text-white leading-tight" style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', wordBreak: 'break-word' }}>
+                {contact.name}
+              </h3>
+              <ArrowUpRight size={14} style={{ color: 'rgba(255,255,255,0.3)', flexShrink: 0, marginTop: '2px' }}/>
+            </div>
             {contact.title && (
-              <p className="text-sm mt-0.5 truncate" style={{ color: 'var(--nova-cyan)' }}>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--nova-cyan)', wordBreak: 'break-word' }}>
                 {contact.title}
               </p>
             )}
             {contact.companyName && (
-              <p className="text-xs text-white/50 mt-0.5 flex items-center gap-1 truncate">
-                <Building2 size={11}/> {contact.companyName}
+              <p className="text-xs text-white/50 mt-0.5 flex items-start gap-1">
+                <Building2 size={11} style={{ flexShrink: 0, marginTop: '2px' }}/>
+                <span style={{ wordBreak: 'break-word' }}>{contact.companyName}</span>
               </p>
             )}
           </div>
-          <ArrowUpRight size={16} className="text-white/30 flex-shrink-0 mt-1"/>
         </div>
 
         {contact.bio && (
@@ -223,22 +226,26 @@ export default function HomePage() {
               Attendees
             </div>
           </div>
-          <div style={{ width: '1px', background: 'rgba(255,255,255,0.1)' }}/>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.8rem', color: 'var(--nova-pink)' }}>
-              {debouncedQuery ? contacts.length : '—'}
-            </div>
-            <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Results
-            </div>
-          </div>
+          {debouncedQuery && (
+            <>
+              <div style={{ width: '1px', background: 'rgba(255,255,255,0.1)' }}/>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.8rem', color: 'var(--nova-pink)' }}>
+                  {contacts.length}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  Results
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {/* Grid */}
       <main style={{ position: 'relative', zIndex: 1, maxWidth: '1200px', margin: '0 auto', padding: '0 16px 80px' }}>
         {loading ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
             {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i}/>)}
           </div>
         ) : contacts.length === 0 ? (
@@ -252,7 +259,7 @@ export default function HomePage() {
             </p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
             {contacts.map(contact => (
               <ContactCard key={contact.id} contact={contact}/>
             ))}

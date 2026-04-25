@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
+import { getAdminAuth, setAdminAuth } from "@/lib/adminAuth";
 import {
   Search, Plus, Trash2, Edit3, X, Check, Users, Building2,
   ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin,
@@ -186,12 +187,11 @@ export default function AdminPage() {
 
   // Auth check
   useEffect(() => {
-    const auth = sessionStorage.getItem("nova_admin_auth");
-    if (!auth) navigate("/admin/login");
+    if (!getAdminAuth()) navigate("/admin/login");
   }, []);
 
   const logout = () => {
-    sessionStorage.removeItem("nova_admin_auth");
+    setAdminAuth(false);
     navigate("/admin/login");
   };
 
