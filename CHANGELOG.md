@@ -5,6 +5,38 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.2.3] — 2026-04-25
+
+### ✨ Bio Quality — Complete Overhaul
+
+#### AI Bio Synthesis from Clean Facts
+- **Root cause of bad bios**: raw string concatenation of `site_text` + `bio_hint` + repo names was feeding navigation chrome ("ventures connect EN / lang home → ventures → connect") directly into the bio field
+- **New architecture**: `synthesizeBio(facts, name)` — a dedicated Claude 3.5 Haiku call that receives a structured fact sheet and writes a clean 2-3 sentence professional bio. Strictly grounded: if a field isn't in the scraped facts, it cannot appear in the bio.
+- **Fact sheet contents**: GitHub bio → company → location → website → open source project list (name + description) → website prose excerpt
+- **Paul Fleury verified**: bio now reads "Paul Fleury is an internet entrepreneur focused on building open source productivity and security tools. He develops innovative applications like junk (a floating notepad), clippy (an AI contract analysis tool), and morrigan (an encrypted digital will platform)..."
+
+#### Smart HTML Prose Extraction
+- **Old `stripHtml`**: naively stripped all tags — returned nav/header/footer noise along with body text
+- **New `extractBodyProse`**:
+  1. Removes `<script>`, `<style>`, `<svg>`, `<noscript>` blocks entirely
+  2. Strips `<nav>`, `<header>`, `<footer>`, `<aside>`, `<menu>` blocks by tag name
+  3. Prioritises `<main>` and `<article>` containers (richest prose)
+  4. Extracts only `<p>` paragraphs longer than 30 chars (skips "Click here", nav items)
+  5. Falls back to full-tag-stripped text only if fewer than 2 paragraphs found
+
+#### Smarter Tags
+- Tags derived from full text scan: Entrepreneur, Founder, Investor, Rust, AI, Open Source, Product, VC
+- No more hardcoded ["Tech"] fallback when we know more
+
+### ✎ Admin Bio Quick Edit
+- **Pencil icon** on every contact row in the Entries tab — opens an inline bio editor
+- **Textarea** with cyan focus ring — pre-filled with current bio (or empty for new)
+- **Save / Cancel** buttons — PATCH to `/api/admin/contacts/:id` with immediate cache invalidation
+- **Bio preview** (one-line truncated) shown in the row even before editing, so you can see what each person has at a glance
+- Works for any contact — add or replace bio, no page navigation needed
+
+---
+
 ## [1.2.2] — 2026-04-25
 
 ### 🛡️ Anti-Hallucination Fix

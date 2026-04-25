@@ -6,7 +6,8 @@ import AdminImport from "./admin-import";
 import {
   Search, Plus, Trash2, X, Users, Building2,
   ArrowLeft, Linkedin, Twitter, Github, Globe, MapPin,
-  Zap, ChevronRight, RefreshCw, LogOut, Upload, ExternalLink, ShieldCheck
+  Zap, ChevronRight, RefreshCw, LogOut, Upload, ExternalLink, ShieldCheck,
+  Pencil, Check
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -228,69 +229,182 @@ function SuggestionCard({
 // ── Entry Row ──────────────────────────────────────────────────────────────
 function EntryRow({ contact, onDelete }: { contact: Contact; onDelete: (id: number) => void }) {
   const [confirming, setConfirming] = useState(false);
+  const [editingBio, setEditingBio] = useState(false);
+  const [bioValue, setBioValue] = useState(contact.bio || '');
+  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+
   const initials = contact.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   const tags: string[] = (() => { try { return JSON.parse(contact.tags || "[]"); } catch { return []; } })();
 
+  async function saveBio() {
+    setSaving(true);
+    try {
+      await apiRequest('PATCH', `/api/admin/contacts/${contact.id}`, { bio: bioValue.trim() || null });
+      queryClient.invalidateQueries({ queryKey: ['/api/contacts'] });
+      setEditingBio(false);
+      toast({ title: 'Bio updated' });
+    } catch {
+      toast({ title: 'Failed to save bio', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 0.15s ease' }}
-      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(32,32,200,0.06)'; }}
-      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}>
-      {/* Avatar */}
-      <div className="nova-avatar" style={{ width: '40px', height: '40px', fontSize: '0.85rem', flexShrink: 0 }}>
-        {contact.avatarUrl
-          ? <img src={contact.avatarUrl} alt={contact.name} onError={(e) => { (e.target as HTMLImageElement).style.display='none'; }}/>
-          : initials}
-      </div>
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'white', fontSize: '0.9rem' }}>
-            {contact.name}
-          </span>
-          {tags.slice(0, 2).map(t => <span key={t} className="nova-tag" style={{ fontSize: '0.6rem' }}>{t}</span>)}
+    <div style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+      {/* Main row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px', transition: 'background 0.15s ease' }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(32,32,200,0.06)'; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}>
+        {/* Avatar */}
+        <div className="nova-avatar" style={{ width: '40px', height: '40px', fontSize: '0.85rem', flexShrink: 0 }}>
+          {contact.avatarUrl
+            ? <img src={contact.avatarUrl} alt={contact.name} onError={(e) => { (e.target as HTMLImageElement).style.display='none'; }}/>
+            : initials}
         </div>
-        <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', marginTop: '1px' }}>
-          {contact.title || '—'}{contact.companyName ? ` · ${contact.companyName}` : ''}
-        </p>
-      </div>
-      {/* Social icons */}
-      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-        {contact.linkedinUrl && <Linkedin size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-        {contact.twitterUrl && <Twitter size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-        {contact.githubUrl && <Github size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
-      </div>
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
-        <Link href={`/contact/${contact.slug}`}>
-          <button style={{ padding: '6px', color: 'rgba(255,255,255,0.4)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'white'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.4)'; }}
-            data-testid={`btn-view-${contact.id}`}>
-            <ChevronRight size={16}/>
+        {/* Info */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'white', fontSize: '0.9rem' }}>
+              {contact.name}
+            </span>
+            {tags.slice(0, 2).map(t => <span key={t} className="nova-tag" style={{ fontSize: '0.6rem' }}>{t}</span>)}
+          </div>
+          <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', marginTop: '1px' }}>
+            {contact.title || '—'}{contact.companyName ? ` · ${contact.companyName}` : ''}
+          </p>
+          {/* Bio preview — one-line teaser */}
+          {!editingBio && (
+            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.3)', marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '340px' }}>
+              {contact.bio
+                ? contact.bio
+                : <span style={{ fontStyle: 'italic', color: 'rgba(255,255,255,0.18)' }}>No bio — click ✎ to add</span>}
+            </p>
+          )}
+        </div>
+        {/* Social icons */}
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          {contact.linkedinUrl && <Linkedin size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+          {contact.twitterUrl && <Twitter size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+          {contact.githubUrl && <Github size={13} style={{ color: 'rgba(255,255,255,0.3)' }}/>}
+        </div>
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+          {/* Edit bio toggle */}
+          <button
+            title={editingBio ? 'Cancel edit' : 'Edit bio'}
+            style={{
+              padding: '6px',
+              color: editingBio ? 'var(--nova-cyan)' : 'rgba(255,255,255,0.3)',
+              background: editingBio ? 'rgba(0,229,208,0.1)' : 'none',
+              border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease'
+            }}
+            onMouseEnter={e => { if (!editingBio) (e.currentTarget as HTMLElement).style.color = 'var(--nova-cyan)'; }}
+            onMouseLeave={e => { if (!editingBio) (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.3)'; }}
+            onClick={() => { setEditingBio(!editingBio); if (!editingBio) setBioValue(contact.bio || ''); }}
+            data-testid={`btn-edit-bio-${contact.id}`}>
+            <Pencil size={14}/>
           </button>
-        </Link>
-        {confirming ? (
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <button style={{ padding: '5px 10px', background: 'rgba(224,64,251,0.2)', border: '1px solid rgba(224,64,251,0.3)', borderRadius: '6px', color: 'var(--nova-pink)', fontSize: '0.75rem', cursor: 'pointer' }}
-              onClick={() => { onDelete(contact.id); setConfirming(false); }}
-              data-testid={`btn-confirm-delete-${contact.id}`}>
-              Delete
+          <Link href={`/contact/${contact.slug}`}>
+            <button style={{ padding: '6px', color: 'rgba(255,255,255,0.4)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'white'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.4)'; }}
+              data-testid={`btn-view-${contact.id}`}>
+              <ChevronRight size={16}/>
             </button>
-            <button style={{ padding: '5px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}
-              onClick={() => setConfirming(false)}>
-              <X size={12}/>
+          </Link>
+          {confirming ? (
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button style={{ padding: '5px 10px', background: 'rgba(224,64,251,0.2)', border: '1px solid rgba(224,64,251,0.3)', borderRadius: '6px', color: 'var(--nova-pink)', fontSize: '0.75rem', cursor: 'pointer' }}
+                onClick={() => { onDelete(contact.id); setConfirming(false); }}
+                data-testid={`btn-confirm-delete-${contact.id}`}>
+                Delete
+              </button>
+              <button style={{ padding: '5px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}
+                onClick={() => setConfirming(false)}>
+                <X size={12}/>
+              </button>
+            </div>
+          ) : (
+            <button style={{ padding: '6px', color: 'rgba(255,255,255,0.25)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--nova-pink)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.25)'; }}
+              onClick={() => setConfirming(true)}
+              data-testid={`btn-delete-${contact.id}`}>
+              <Trash2 size={15}/>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Bio edit panel */}
+      {editingBio && (
+        <div style={{ padding: '0 16px 14px 70px', background: 'rgba(0,229,208,0.03)', borderTop: '1px solid rgba(0,229,208,0.08)' }}>
+          <p style={{ fontSize: '0.68rem', color: 'var(--nova-cyan)', marginBottom: '8px', letterSpacing: '0.05em', textTransform: 'uppercase', opacity: 0.8 }}>
+            Bio — {contact.name}
+          </p>
+          <textarea
+            value={bioValue}
+            onChange={e => setBioValue(e.target.value)}
+            placeholder="Write a short bio... (2-3 sentences about who they are and what they build)"
+            rows={3}
+            data-testid={`textarea-bio-${contact.id}`}
+            style={{
+              width: '100%',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(0,229,208,0.2)',
+              borderRadius: '8px',
+              padding: '10px 12px',
+              color: 'white',
+              fontSize: '0.8rem',
+              lineHeight: 1.6,
+              resize: 'vertical',
+              fontFamily: 'var(--font-body)',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.5)'; }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'rgba(0,229,208,0.2)'; }}
+          />
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button
+              onClick={saveBio}
+              disabled={saving}
+              data-testid={`btn-save-bio-${contact.id}`}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '5px',
+                padding: '7px 14px',
+                background: 'linear-gradient(135deg, rgba(0,229,208,0.2), rgba(32,32,200,0.2))',
+                border: '1px solid rgba(0,229,208,0.35)',
+                borderRadius: '7px',
+                color: 'var(--nova-cyan)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: saving ? 'not-allowed' : 'pointer',
+                opacity: saving ? 0.6 : 1,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <Check size={13}/> {saving ? 'Saving...' : 'Save bio'}
+            </button>
+            <button
+              onClick={() => setEditingBio(false)}
+              style={{
+                padding: '7px 12px',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '7px',
+                color: 'rgba(255,255,255,0.4)',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
             </button>
           </div>
-        ) : (
-          <button style={{ padding: '6px', color: 'rgba(255,255,255,0.25)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px', transition: 'all 0.15s ease' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--nova-pink)'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.25)'; }}
-            onClick={() => setConfirming(true)}
-            data-testid={`btn-delete-${contact.id}`}>
-            <Trash2 size={15}/>
-          </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -252,18 +252,54 @@ async function fetchHtmlRaw(url: string, ua: string, timeoutMs = 8000): Promise<
 
 async function fetchHtmlText(url: string, timeoutMs = 8000): Promise<string> {
   const html = await fetchHtmlRaw(url, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/121.0 Safari/537.36', timeoutMs);
-  return stripHtml(html).slice(0, 2000);
+  return extractBodyProse(html).slice(0, 2000);
 }
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+// Smarter HTML text extraction — skips nav/header/footer/aside noise,
+// targets meaningful prose from <main>, <article>, <section>, <p> tags.
+function extractBodyProse(html: string): string {
+  if (!html) return '';
+  // 1. Strip scripts, styles, SVG, noscript entirely
+  let cleaned = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '');
+
+  // 2. Remove entire nav / header / footer / aside / menu blocks
+  cleaned = cleaned
+    .replace(/<(nav|header|footer|aside|menu)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '')
+    .replace(/<(ul|ol)(\s[^>]*)?\sclass=["'][^"']*(?:nav|menu|header|footer|breadcrumb)[^"']*["'][\s\S]*?<\/\1>/gi, '');
+
+  // 3. Try to extract <main> or <article> first — richest prose containers
+  const mainMatch = cleaned.match(/<(?:main|article)(\s[^>]*)?>([\s\S]*?)<\/(?:main|article)>/i);
+  const workingHtml = mainMatch ? mainMatch[2] : cleaned;
+
+  // 4. Extract text from <p> tags (core prose)
+  const paragraphs: string[] = [];
+  const pRe = /<p(\s[^>]*)?>([\s\S]*?)<\/p>/gi;
+  let m;
+  while ((m = pRe.exec(workingHtml)) !== null) {
+    const text = m[2].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#\d+;/g, '').replace(/\s{2,}/g, ' ').trim();
+    if (text.length > 30) paragraphs.push(text); // skip micro-snippets ("Click here", etc)
+  }
+
+  if (paragraphs.length >= 2) {
+    // Return up to 4 meaningful paragraphs
+    return paragraphs.slice(0, 4).join(' ');
+  }
+
+  // 5. Fallback: strip all tags from working area
+  return workingHtml
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&#\d+;/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
+}
+
+function stripHtml(html: string): string {
+  return extractBodyProse(html);
 }
 
 // Parse model JSON output into a clean array
@@ -303,40 +339,106 @@ Return EXACTLY 4 items as a raw JSON array (no markdown, no wrapper):
 {"name":"Full Name","title":"Role or null","bio":"Factual bio or null","avatarUrl":null,"location":"City, Country or null","companyName":"Company or null","companyRole":"Role or null","website":"verified URL or null","linkedinUrl":"verified URL or null","twitterUrl":"verified URL or null","githubUrl":"verified URL or null","tags":["tag1","tag2"],"confidence":0.0,"source":"knowledge base","reason":"1 sentence: why they might attend NovaNEXT 2026"}`;
 }
 
-// Build a suggestion object directly from enriched facts — no AI involved.
-// This is the "ground truth" entry for the anchor person when a URL is provided.
-function buildAnchorFromFacts(profile: EnrichedProfile, query: string): any {
+// ── Bio synthesis via AI ────────────────────────────────────────────────────
+// Takes a structured fact object and writes a clean, professional 2-3 sentence bio.
+// This is the ONLY place where AI writes bio text — strictly grounded in the provided facts.
+async function synthesizeBio(facts: Record<string, string>, name: string): Promise<string | null> {
+  // Build a compact fact sheet to hand to the model
+  const factLines: string[] = [];
+  if (facts['bio_hint'])   factLines.push(`GitHub/profile bio: "${facts['bio_hint']}"`);
+  if (facts['company'])    factLines.push(`Company/org: ${facts['company']}`);
+  if (facts['location'])   factLines.push(`Location: ${facts['location']}`);
+  if (facts['website'])    factLines.push(`Website: ${facts['website']}`);
+  if (facts['top_repos']) {
+    // Parse repo entries into clean project descriptions
+    const repos = facts['top_repos'].split('; ').slice(0, 4).map(r => {
+      const colon = r.indexOf(':');
+      if (colon === -1) return r.trim();
+      const repoName = r.slice(0, colon).trim();
+      const desc = r.slice(colon + 1).trim();
+      return desc ? `${repoName} — ${desc}` : repoName;
+    }).filter(Boolean);
+    if (repos.length) factLines.push(`Open source projects: ${repos.join(' | ')}`);
+  }
+  if (facts['site_text']) {
+    // Only include site_text if it looks like real prose (not nav junk)
+    const prose = facts['site_text'].replace(/[|>\u2192\u2713\u2715\u00d7\u2022]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    if (prose.length > 60) factLines.push(`Website content excerpt: ${prose.slice(0, 400)}`);
+  }
+
+  if (factLines.length === 0) return null;
+
+  const prompt = `You are writing a professional bio for a networking app directory at NovaNEXT 2026, a major AI and startup conference in Aveiro, Portugal.
+
+Person: ${name}
+
+VERIFIED FACTS (scraped from their actual profiles — use only these):
+${factLines.join('\n')}
+
+Write a crisp, professional 2-3 sentence bio for their directory card.
+Rules:
+- Use ONLY the facts above. Do NOT add anything not present in the facts.
+- Do NOT mention NovaNEXT or the conference.
+- Do NOT invent a job title, company, funding, or achievement unless explicitly in the facts.
+- Write in third person ("He builds...", "She is...", "They create...") — pick the most neutral if gender unknown.
+- First sentence: who they are (role/identity from bio_hint or company). Second/third: what they build or do, based on projects/site content.
+- Keep it under 80 words. No em-dashes as punctuation. No marketing fluff.
+- Return ONLY the bio text — no quotes, no label, no JSON.`;
+
+  try {
+    const result = await callOpenRouter('anthropic/claude-3.5-haiku', prompt);
+    const bio = result.trim().replace(/^["']|["']$/g, '').trim();
+    return bio.length > 20 ? bio : null;
+  } catch {
+    return null;
+  }
+}
+
+// Build a suggestion object directly from enriched facts.
+// Bio is synthesized by AI from clean facts (no raw concatenation, no navigation junk).
+async function buildAnchorFromFacts(profile: EnrichedProfile, query: string): Promise<any> {
   const f = profile.facts;
   const name = f['name'] || query.replace(/https?:\/\/\S+/g, '').trim() || 'Unknown';
 
-  // Build bio from verified facts only — no invention
-  const bioParts: string[] = [];
-  if (f['bio_hint'])   bioParts.push(f['bio_hint']);
-  if (f['company'])    bioParts.push(`Works at ${f['company']}.`);
-  if (f['location'])   bioParts.push(`Based in ${f['location']}.`);
-  if (f['top_repos']) {
-    // Summarise top repos as products/projects
-    const repoSummaries = f['top_repos'].split('; ')
-      .map(r => r.split(':')[1]?.trim()).filter(Boolean).slice(0, 3);
-    if (repoSummaries.length) bioParts.push(`Notable projects: ${repoSummaries.join(' • ')}`);
+  // Get enriched repo data if GitHub profile
+  if ((profile.platform === 'github' || f['github_handle']) && f['github_handle'] && !f['top_repos']) {
+    const repos = await fetchJson(`https://api.github.com/users/${f['github_handle']}/repos?sort=stars&per_page=6`);
+    if (Array.isArray(repos)) {
+      f['top_repos'] = repos
+        .filter((r: any) => r.description)
+        .slice(0, 5)
+        .map((r: any) => `${r.name}: ${r.description}`)
+        .join('; ');
+    }
   }
-  if (f['site_text']) bioParts.push(f['site_text'].slice(0, 200).replace(/\s+/g, ' '));
 
-  // Tags from what we know
-  const tags: string[] = ['Tech'];
-  if (f['top_repos']?.toLowerCase().includes('rust'))    tags.push('Rust');
-  if (f['top_repos']?.toLowerCase().includes('ai') || f['bio_hint']?.toLowerCase().includes('ai')) tags.push('AI');
-  if (f['bio_hint']?.toLowerCase().includes('entrepreneur')) tags.push('Entrepreneur');
-  if (f['bio_hint']?.toLowerCase().includes('founder'))      tags.push('Founder');
-  if (profile.platform === 'github') tags.push('Open Source');
+  // Synthesize bio via AI — grounded in facts only
+  const bio = await synthesizeBio(f, name);
+
+  // Derive tags from what we know
+  const tags: string[] = [];
+  const allText = [f['bio_hint'] || '', f['top_repos'] || '', f['site_text'] || ''].join(' ').toLowerCase();
+  if (allText.includes('entrepreneur')) tags.push('Entrepreneur');
+  if (allText.includes('founder')) tags.push('Founder');
+  if (allText.includes('investor')) tags.push('Investor');
+  if (allText.includes('rust') || allText.includes('tauri')) tags.push('Rust');
+  if (allText.includes(' ai ') || allText.includes('artificial intelligence') || allText.includes('machine learning') || allText.includes('llm')) tags.push('AI');
+  if (allText.includes('open source') || profile.platform === 'github') tags.push('Open Source');
+  if (allText.includes('design') || allText.includes('ux') || allText.includes('product')) tags.push('Product');
+  if (allText.includes('invest') || allText.includes('venture') || allText.includes('vc ') || allText.includes('fund')) tags.push('VC');
+  if (tags.length === 0) tags.push('Tech');
+
+  // Title: use the short GitHub bio as a title-line — it's typically a role/identity
+  // NOT as the bio body (previously that doubled-up ugly)
+  const title = f['bio_hint'] || null;
 
   return {
     name,
-    title:       f['bio_hint'] || null,   // GitHub bio IS the title for many indie builders
-    bio:         bioParts.length ? bioParts.join(' ') : null,
+    title,
+    bio,
     avatarUrl:   null,
     location:    f['location'] || null,
-    companyName: f['company'] || null,
+    companyName: f['company']?.replace(/^@/, '') || null,
     companyRole: null,
     website:     f['website'] || null,
     linkedinUrl: f['linkedin_url'] || null,
@@ -396,7 +498,7 @@ async function searchPersonOrCompany(query: string, extraUrls: string[] = []): P
   // ANTI-HALLUCINATION: when we have a verified enriched profile, ALWAYS build the anchor
   // from scraped facts only — never trust the AI bio for anchor persons.
   if (hasAnchor && enrichedProfiles[0]?.facts['name']) {
-    const anchorEntry = sanitizeSuggestion(buildAnchorFromFacts(enrichedProfiles[0], cleanQuery || query));
+    const anchorEntry = sanitizeSuggestion(await buildAnchorFromFacts(enrichedProfiles[0], cleanQuery || query));
     if (anchorEntry) {
       const anchorKey = anchorEntry.name.toLowerCase().replace(/[^a-z0-9]/g, '');
       const filtered = suggestions.filter(s => s.name.toLowerCase().replace(/[^a-z0-9]/g, '') !== anchorKey);
