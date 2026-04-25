@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Search, ArrowUpRight, Linkedin, Twitter, Github, Globe, MapPin, Building2 } from "lucide-react";
+import { Search, ArrowUpRight, Linkedin, Twitter, Github, Globe, MapPin, Building2, Zap } from "lucide-react";
 import type { Contact } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -254,16 +254,61 @@ export default function HomePage() {
             <h3 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.3rem', color: 'white', marginBottom: '8px' }}>
               {debouncedQuery ? `No results for "${debouncedQuery}"` : "No attendees yet"}
             </h3>
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem' }}>
-              {debouncedQuery ? "Try a different search term" : "Check back soon — the roster is being assembled."}
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem', marginBottom: debouncedQuery ? '28px' : '0' }}>
+              {debouncedQuery ? "Try a different search term, or research this person with AI." : "Check back soon — the roster is being assembled."}
             </p>
+            {debouncedQuery && (
+              <a
+                href={`#/admin?q=${encodeURIComponent(debouncedQuery)}`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '8px',
+                  background: 'linear-gradient(135deg, var(--nova-blue) 0%, rgba(32,32,200,0.8) 100%)',
+                  border: '1px solid rgba(32,32,200,0.5)',
+                  borderRadius: '12px', padding: '12px 24px',
+                  color: 'white', fontFamily: 'var(--font-display)', fontWeight: 700,
+                  fontSize: '0.9rem', letterSpacing: '0.02em', textDecoration: 'none',
+                  cursor: 'pointer', transition: 'all 0.2s ease',
+                  boxShadow: '0 0 24px rgba(32,32,200,0.3)'
+                }}
+                data-testid="btn-research-ai-empty"
+              >
+                <Zap size={15}/>
+                Research "{debouncedQuery}" with AI →
+              </a>
+            )}
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-            {contacts.map(contact => (
-              <ContactCard key={contact.id} contact={contact}/>
-            ))}
-          </div>
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+              {contacts.map(contact => (
+                <ContactCard key={contact.id} contact={contact}/>
+              ))}
+            </div>
+            {/* Floating AI research CTA when search has results */}
+            {debouncedQuery && contacts.length > 0 && (
+              <div style={{ textAlign: 'center', paddingTop: '36px' }}>
+                <a
+                  href={`#/admin?q=${encodeURIComponent(debouncedQuery)}`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '8px',
+                    background: 'rgba(32,32,200,0.12)',
+                    border: '1px solid rgba(32,32,200,0.35)',
+                    borderRadius: '12px', padding: '10px 22px',
+                    color: 'rgba(255,255,255,0.65)', fontFamily: 'var(--font-display)', fontWeight: 700,
+                    fontSize: '0.82rem', letterSpacing: '0.02em', textDecoration: 'none',
+                    cursor: 'pointer', transition: 'all 0.2s ease',
+                  }}
+                  data-testid="btn-research-ai-results"
+                >
+                  <Zap size={13}/>
+                  Research "{debouncedQuery}" with AI →
+                </a>
+                <p style={{ marginTop: '8px', fontSize: '0.72rem', color: 'rgba(255,255,255,0.3)' }}>
+                  Not finding the right person? Add them via Admin.
+                </p>
+              </div>
+            )}
+          </>
         )}
       </main>
 

@@ -76,85 +76,160 @@ function sanitizeSuggestion(raw: any): any | null {
   }
 }
 
-// Search for a person/company using multiple AI models and merge results
-async function searchPersonOrCompany(query: string): Promise<any[]> {
-  const prompt = `You are a researcher for NovaNEXT, a major tech & AI investment conference in Aveiro, Portugal on 17 June 2026. The conference focuses on AI, startups, investors, and Portuguese/Lusophone tech ecosystems.
+// ── URL detector & page scraper ─────────────────────────────────────────────
+// Detects URLs in the query string and fetches readable text from those pages
+function extractUrls(text: string): string[] {
+  const urlRe = /https?:\/\/[^\s<>"']+/gi;
+  return (text.match(urlRe) || []).map(u => u.replace(/[.,;!?)]+$/, ''));
+}
 
-Search your knowledge for people or companies named or related to: "${query}"
+async function fetchPageText(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; NovaNEXT-Research/1.0)',
+        'Accept': 'text/html,application/xhtml+xml,*/*',
+        'Accept-Language': 'en,pt;q=0.9',
+      }
+    });
+    if (!res.ok) return '';
+    const html = await res.text();
+    // Strip tags, collapse whitespace — keep first 4000 chars
+    return html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+      .slice(0, 4000);
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-Return EXACTLY 3 distinct suggestions as a JSON array. Each item must be a person OR a company that could plausibly attend NovaNEXT 2026 in Portugal. Prioritize:
-1. People/companies in Portuguese tech/startup/VC ecosystem
-2. International AI/tech/VC figures who operate in Europe
-3. Be especially careful with homonyms - always prefer the Portuguese/Lusophone or European tech context
+// Parse model JSON output into a clean array
+function parseModelOutput(raw: string): any[] {
+  try {
+    let content = raw.trim()
+      .replace(/^```(?:json)?[\r\n]*/m, '')
+      .replace(/```[\s]*$/m, '')
+      .trim();
+    let parsed = JSON.parse(content);
+    if (!Array.isArray(parsed) && Array.isArray(parsed?.suggestions)) parsed = parsed.suggestions;
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
 
-For each suggestion, return this exact JSON structure:
+// ── Main research function ────────────────────────────────────────────────────
+// Accepts a free-text query (may contain URLs). Scrapes any linked pages for
+// grounding context, then queries 3 AI models in parallel asking for 4 results
+// each → deduplicates → returns up to 10 sorted by confidence.
+async function searchPersonOrCompany(query: string, extraUrls: string[] = []): Promise<any[]> {
+  // 1. Extract URLs embedded in the query itself
+  const inlineUrls = extractUrls(query);
+  const cleanQuery = query.replace(/https?:\/\/[^\s<>"']+/gi, '').replace(/\s{2,}/g, ' ').trim();
+  const allUrls = [...new Set([...inlineUrls, ...extraUrls])];
+
+  // 2. Fetch page text from any detected URLs (in parallel, 10s each)
+  let pageContext = '';
+  if (allUrls.length > 0) {
+    const texts = await Promise.allSettled(allUrls.map(fetchPageText));
+    const joined = texts
+      .filter(r => r.status === 'fulfilled' && r.value)
+      .map((r: any) => r.value as string)
+      .join('\n\n---\n\n');
+    if (joined) {
+      pageContext = `\n\nADDITIONAL CONTEXT scraped from provided URLs (use this to anchor your research — the person/company IS the one described here):\n${joined.slice(0, 6000)}`;
+    }
+  }
+
+  // 3. Build the prompt — ask for 4 results per model (3 models × 4 = up to 12, dedup to 10)
+  const prompt = `You are a precision researcher for NovaNEXT, a major tech & AI investment conference in Aveiro, Portugal on 17 June 2026. The conference focuses on AI, startups, investors, Portuguese/Lusophone tech ecosystems, and European deep-tech.
+
+Search your knowledge for people or companies named or related to: "${cleanQuery || query}"${
+  pageContext
+}
+
+Return EXACTLY 4 distinct suggestions as a JSON array. Each item must be a real person OR real company. Rules:
+- If page context was provided above: the FIRST result MUST be the exact person/company from that page, with high confidence (0.9+). Use the scraped data to fill all fields accurately.
+- Subsequent results: other people/companies with the same or similar name, or closely related figures who'd attend NovaNEXT Portugal 2026
+- Prioritise: Portuguese/Lusophone tech ecosystem, European AI/startup/VC, international figures active in Portugal
+- Homonyms: always prefer the European/Portuguese tech context unless context proves otherwise
+- Write a DETAILED bio of 3-5 sentences — be specific about their work, achievements, and connection to Portugal/tech
+- ALL URLs must be real and verifiable. If unsure, set to null
+
+For each suggestion return this EXACT JSON structure (no extra fields):
 {
   "type": "person" or "company",
   "name": "Full Name",
-  "title": "Job title or role",
-  "bio": "2-3 sentence bio",
+  "title": "Current job title or role",
+  "bio": "Detailed 3-5 sentence bio with specifics",
   "avatarUrl": null,
   "location": "City, Country",
-  "companyName": "Company name (if person)",
-  "companyRole": "Role at company (if person)",
-  "website": "https://...",
-  "linkedinUrl": "https://linkedin.com/in/... (if known)",
-  "twitterUrl": "https://twitter.com/... or https://x.com/... (if known)",
-  "githubUrl": "https://github.com/... (if known)",
-  "tags": ["AI", "startup", "investor", etc],
+  "companyName": "Employer or company name (if person)",
+  "companyRole": "Their role at the company",
+  "website": "https://personal-site.com or null",
+  "linkedinUrl": "https://linkedin.com/in/handle or null",
+  "twitterUrl": "https://x.com/handle or null",
+  "githubUrl": "https://github.com/handle or null",
+  "tags": ["3-6 relevant tags like AI, Startup, Investor, Portugal, Speaker"],
   "confidence": 0.0 to 1.0,
-  "source": "knowledge base",
-  "reason": "Why this person/company is likely at NovaNEXT Portugal 2026"
+  "source": "knowledge base" or "scraped profile",
+  "reason": "1-2 sentences: why this specific person/company would attend NovaNEXT 2026 in Aveiro, Portugal"
 }
 
-Return ONLY valid JSON array, no markdown, no explanation. If unsure about a URL, set it to null.`;
+Return ONLY a valid JSON array. No markdown, no explanation, no wrapper object.`;
 
-  // Try 3 models in parallel for best coverage
+  // 4. Query 3 models in parallel
   const models = [
     "anthropic/claude-3.5-haiku",
     "google/gemini-flash-1.5",
-    "openai/gpt-4o-mini"
+    "openai/gpt-4o-mini",
   ];
 
   const results = await Promise.allSettled(
     models.map(model => callOpenRouter(model, prompt))
   );
 
+  // 5. Merge, deduplicate, sanitize
   const allSuggestions: any[] = [];
   const seen = new Set<string>();
 
+  // If we have page context, boost the first result from each model
+  const hasContext = pageContext.length > 0;
+
   for (const result of results) {
-    if (result.status === "fulfilled") {
-      try {
-        let content = result.value.trim();
-        // Strip markdown code blocks if present
-        content = content.replace(/^```(?:json)?[\r\n]*/m, '').replace(/```[\s]*$/m, '').trim();
-        // Some models wrap in an object: { suggestions: [...] }
-        let parsed = JSON.parse(content);
-        if (!Array.isArray(parsed) && Array.isArray(parsed?.suggestions)) {
-          parsed = parsed.suggestions;
-        }
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) {
-            const sanitized = sanitizeSuggestion(item);
-            if (!sanitized) continue;
-            const key = sanitized.name.toLowerCase();
-            if (!seen.has(key)) {
-              seen.add(key);
-              allSuggestions.push(sanitized);
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Parse error from model:", e);
+    if (result.status !== 'fulfilled') continue;
+    const items = parseModelOutput(result.value);
+    items.forEach((item, idx) => {
+      const sanitized = sanitizeSuggestion(item);
+      if (!sanitized) return;
+      // Boost confidence of first item when we had page context
+      if (hasContext && idx === 0) sanitized.confidence = Math.max(sanitized.confidence, 0.9);
+      const key = sanitized.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!seen.has(key)) {
+        seen.add(key);
+        allSuggestions.push(sanitized);
       }
-    }
+    });
   }
 
-  // Return top 3-5 by confidence (deduplicated)
+  // 6. Sort by confidence desc, return up to 10
   return allSuggestions
     .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
-    .slice(0, 5);
+    .slice(0, 10);
 }
 
 export function registerRoutes(httpServer: Server, app: Express): void {
@@ -193,12 +268,16 @@ export function registerRoutes(httpServer: Server, app: Express): void {
 
   // AI-powered research: search web/AI for a name/company
   app.post("/api/admin/research", async (req, res) => {
-    const schema = z.object({ query: z.string().min(1) });
+    const schema = z.object({
+      query: z.string().min(1),
+      url: z.string().optional(),
+    });
     const body = schema.safeParse(req.body);
     if (!body.success) return res.status(400).json({ error: "Query required" });
 
     try {
-      const suggestions = await searchPersonOrCompany(body.data.query);
+      const extraUrls = body.data.url ? [body.data.url] : [];
+      const suggestions = await searchPersonOrCompany(body.data.query, extraUrls);
       res.json({ suggestions });
     } catch (e: any) {
       console.error("Research error:", e);
