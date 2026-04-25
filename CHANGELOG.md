@@ -5,6 +5,48 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.2.2] — 2026-04-25
+
+### 🛡️ Anti-Hallucination Fix
+
+#### Anchor Bio Built from Scraped Facts Only
+- **Root cause fixed** — AI was freely generating bio text for anchor persons even when verified scraped data was available, producing completely invented content (e.g. "CEO of AI Innovations, Lisbon")
+- **`buildAnchorFromFacts()` now wired unconditionally** — whenever enrichment returns a verified profile with a name, the anchor result is always constructed from scraped facts only (GitHub API bio, company, location, top repos, site text); the AI output is never used for the #1 result
+- **Previous conditional was wrong** — the old code only used facts when `firstKey !== anchorName`; if the AI happened to guess the name correctly it still used the hallucinated bio. Now: if we have facts, we always use facts.
+- **Bio is deterministic** — `bioParts` array assembled strictly from: `bio_hint` (GitHub bio field) → `company` → `location` → `top_repos` summaries → `site_text` excerpt. Nothing invented.
+- **Paul Fleury test verified**: LinkedIn URL input now returns `"Internet entrepreneur"` (from GitHub API), with all links intact and `source: "scraped profile"`
+
+### ✨ New Feature — QR Code on Profile Page
+
+- **QR code displayed on every contact profile** — generated client-side via `qrcode` npm package
+- **Cyan-on-dark palette** — dark: `#00E5D0`, light: `#080818` — matches NovaNEXT design system
+- **Copy URL button** — one-tap copy of the profile's `/#/contact/<slug>` URL alongside the QR
+- **Share any profile** — attendees at the conference can scan to pull up a contact card on their phone
+
+---
+
+## [1.2.1] — 2026-04-25
+
+### ✨ New Features
+
+#### Platform-Aware Enrichment Engine (Rebuilt)
+- **LinkedIn handle → GitHub crossref** — LinkedIn returns HTTP 999 (login wall). Instead, the handle is extracted from the URL and queried against the GitHub API — works perfectly for users with matching handles (e.g. `paulfxyz`)
+- **GitHub API enrichment** — structured JSON: name, bio, company, location, website, twitter_username, top repos with descriptions and versions
+- **Twitter/X enrichment** — Twitterbot UA for og: meta tags → GitHub API crossref for linked profiles
+- **Generic website** — og:title, og:description extraction with 8s timeout
+
+#### Parallel Architecture
+- Enrichment + 3 AI models fire simultaneously (no sequential waiting)
+- Verified URLs hard-injected into anchor result post-completion
+- ~16s with URL, ~8s without (vs ~30s sequential in v1.2.0)
+
+#### VERIFIED Badge & Rich Suggestion Cards
+- **VERIFIED badge** on anchor result when enrichment confirms the profile
+- **Colored link buttons** with ExternalLink icon — LinkedIn (blue), GitHub (purple), Twitter (sky), Website (cyan)
+- All links are live `<a>` tags — click to verify in context before adding
+
+---
+
 ## [1.2.0] — 2026-04-25
 
 ### ✨ New Features
